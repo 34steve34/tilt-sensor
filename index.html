@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>Tilt Square</title>
 
 <style>
@@ -15,6 +15,7 @@ body {
     background: #1a1a1a;
     overflow: hidden;
     touch-action: none;
+    font-family: monospace;
 }
 #gameCanvas {
     display: block;
@@ -25,36 +26,37 @@ body {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    padding: 20px 40px;
-    font-size: 24px;
+    padding: 20px 60px;
+    font-size: 32px;
     background: #4CAF50;
     color: white;
     border: none;
-    border-radius: 10px;
+    border-radius: 12px;
     cursor: pointer;
-	z-index: 10;
+    z-index: 10;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.5);
+}
+#startBtn:active {
+    transform: translate(-50%, -48%);
+    background: #45a049;
 }
 #score {
     position: absolute;
-    top: 10px;
+    top: 16px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 24px;
+    font-size: 28px;
     color: white;
-    font-family: monospace;
+    z-index: 5;
 }
 </style>
 </head>
-
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="score">Time: 0.0s</div>
 <button id="startBtn">START</button>
 
 <script>
-/* =======================
-   CANVAS SETUP
-======================= */
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
@@ -67,65 +69,51 @@ function resize() {
 resize();
 window.addEventListener("resize", resize);
 
-/* =======================
-   GAME STATE
-======================= */
+/* Game state */
 let gameRunning = false;
 let startTime = 0;
 let activeQuadrant = null;
 let gracePeriod = 0;
 
-// Tilt data
 let baseBeta = 0;
 let baseGamma = 0;
 let tiltX = 0;
 let tiltY = 0;
 
-/* =======================
-   POINTS
-======================= */
 let points = [];
 
 function resetPoints() {
     points = [
-        { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 }, // TL
-        { x: canvas.width * 0.7, y: canvas.height * 0.3, vx: 0, vy: 0 }, // TR
-        { x: canvas.width * 0.3, y: canvas.height * 0.7, vx: 0, vy: 0 }, // BL
-        { x: canvas.width * 0.7, y: canvas.height * 0.7, vx: 0, vy: 0 }  // BR
+        { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 },
+        { x: canvas.width * 0.7, y: canvas.height * 0.3, vx: 0, vy: 0 },
+        { x: canvas.width * 0.3, y: canvas.height * 0.7, vx: 0, vy: 0 },
+        { x: canvas.width * 0.7, y: canvas.height * 0.7, vx: 0, vy: 0 }
     ];
 }
 
 function randomizePoint(i) {
-    const speed = 0.8;
+    const speed = 0.8 + Math.random() * 0.4;
     const a = Math.random() * Math.PI * 2;
     points[i].vx = Math.cos(a) * speed;
     points[i].vy = Math.sin(a) * speed;
 }
 
 function randomizeAll() {
-    for (let i = 0; i < points.length; i++) {
-        randomizePoint(i);
-    }
+    for (let i = 0; i < points.length; i++) randomizePoint(i);
 }
 
-/* =======================
-   ORIENTATION CONTROL
-======================= */
+/* Orientation */
 function handleOrientation(e) {
-    if (e.beta == null || e.gamma == null) return;
-
-    // Landscape-friendly mapping
-    tiltX = e.gamma - baseGamma; // left / right
-    tiltY = e.beta  - baseBeta;  // forward / back
-
-    tiltX = Math.max(-30, Math.min(30, tiltX));
-    tiltY = Math.max(-30, Math.min(30, tiltY));
+    if (!e.beta && !e.gamma) return;
+    tiltX = (e.gamma || 0) - baseGamma;
+    tiltY = (e.beta  || 0) - baseBeta;
+    tiltX = Math.max(-35, Math.min(35, tiltX));
+    tiltY = Math.max(-35, Math.min(35, tiltY));
 }
 
-/* =======================
-   TOUCH CONTROLS
-======================= */
+/* Touch controls */
 canvas.addEventListener("touchstart", e => {
+    if (!gameRunning) return;
     e.preventDefault();
     const t = e.touches[0];
     const r = canvas.getBoundingClientRect();
@@ -135,12 +123,11 @@ canvas.addEventListener("touchstart", e => {
     const mx = canvas.width / 2;
     const my = canvas.height / 2;
 
-    if (x < mx && y < my) activeQuadrant = 0;
-    else if (x >= mx && y < my) activeQuadrant = 1;
-    else if (x < mx && y >= my) activeQuadrant = 2;
-    else activeQuadrant = 3;
+    if      (x < mx  && y < my)  activeQuadrant = 0;
+    else if (x >= mx && y < my)  activeQuadrant = 1;
+    else if (x < mx  && y >= my) activeQuadrant = 2;
+    else                         activeQuadrant = 3;
 
-    // Randomize the other 3
     for (let i = 0; i < points.length; i++) {
         if (i !== activeQuadrant) randomizePoint(i);
     }
@@ -150,35 +137,20 @@ canvas.addEventListener("touchend", () => {
     activeQuadrant = null;
 });
 
-/* =======================
-   GEOMETRY CHECK
-======================= */
+/* Intersection check */
 function linesIntersect(p1, p2, p3, p4) {
-    const d =
-        (p2.x - p1.x) * (p4.y - p3.y) -
-        (p2.y - p1.y) * (p4.x - p3.x);
-
+    const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
     if (d === 0) return false;
-
-    const u =
-        ((p3.x - p1.x) * (p4.y - p3.y) -
-         (p3.y - p1.y) * (p4.x - p3.x)) / d;
-
-    const v =
-        ((p3.x - p1.x) * (p2.y - p1.y) -
-         (p3.y - p1.y) * (p2.x - p1.x)) / d;
-
+    const u = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / d;
+    const v = ((p3.x - p1.x) * (p2.y - p1.y) - (p3.y - p1.y) * (p2.x - p1.x)) / d;
     return u > 0 && u < 1 && v > 0 && v < 1;
 }
 
 function squareValid() {
-    const edges = [
-        [0,1],[1,3],[3,2],[2,0]
-    ];
-
+    const edges = [[0,1],[1,3],[3,2],[2,0]];
     for (let i = 0; i < edges.length; i++) {
         for (let j = i + 2; j < edges.length; j++) {
-            if (i === 0 && j === 2) continue;
+            if (i === 0 && j === 2) continue; // skip opposite edges check
             const [a,b] = edges[i];
             const [c,d] = edges[j];
             if (linesIntersect(points[a], points[b], points[c], points[d])) {
@@ -189,68 +161,64 @@ function squareValid() {
     return true;
 }
 
-/* =======================
-   UPDATE LOOP
-======================= */
+/* Update */
 function update() {
     if (!gameRunning) return;
 
-if (gracePeriod > 0) {
-    gracePeriod--;
-} else if (!squareValid()) {
+    if (gracePeriod > 0) {
+        gracePeriod--;
+    } else if (!squareValid()) {
         gameRunning = false;
         alert(`Game Over! Time: ${((Date.now() - startTime)/1000).toFixed(1)}s`);
         startBtn.style.display = "block";
         return;
-}
+    }
 
     points.forEach((p, i) => {
         if (i === activeQuadrant && activeQuadrant !== null) {
             const angle = Math.atan2(tiltY, tiltX);
             const mag = Math.hypot(tiltX, tiltY);
-            const speed = Math.min(mag * 0.1, 5);
-
+            const speed = Math.min(mag * 0.12, 6);
             p.vx = Math.cos(angle) * speed;
             p.vy = Math.sin(angle) * speed;
         } else {
-            // light damping for uncontrolled points
-            p.vx *= 0.99;
-            p.vy *= 0.99;
+            p.vx *= 0.985;
+            p.vy *= 0.985;
         }
 
         p.x += p.vx;
         p.y += p.vy;
 
-        if (p.x < 20 || p.x > canvas.width - 20) p.vx *= -1;
-        if (p.y < 20 || p.y > canvas.height - 20) p.vy *= -1;
+        // Bounce
+        if (p.x < 25 || p.x > canvas.width - 25) p.vx *= -1;
+        if (p.y < 25 || p.y > canvas.height - 25) p.vy *= -1;
     });
-
 }
 
-/* =======================
-   DRAW
-======================= */
+/* Draw */
 function draw() {
     ctx.fillStyle = "#0a0a0a";
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    ctx.strokeStyle = "rgba(255,255,255,0.1)";
+    // quadrant lines
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
     ctx.beginPath();
-    ctx.moveTo(canvas.width/2,0);
-    ctx.lineTo(canvas.width/2,canvas.height);
-    ctx.moveTo(0,canvas.height/2);
-    ctx.lineTo(canvas.width,canvas.height/2);
+    ctx.moveTo(canvas.width/2, 0);
+    ctx.lineTo(canvas.width/2, canvas.height);
+    ctx.moveTo(0, canvas.height/2);
+    ctx.lineTo(canvas.width, canvas.height/2);
     ctx.stroke();
 
     if (activeQuadrant !== null) {
-        ctx.fillStyle = "rgba(76,175,80,0.15)";
+        ctx.fillStyle = "rgba(76,175,80,0.12)";
         const qx = activeQuadrant % 2 === 0 ? 0 : canvas.width/2;
         const qy = activeQuadrant < 2 ? 0 : canvas.height/2;
         ctx.fillRect(qx, qy, canvas.width/2, canvas.height/2);
     }
 
+    // square
     ctx.strokeStyle = "#4CAF50";
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
     ctx.lineTo(points[1].x, points[1].y);
@@ -259,22 +227,19 @@ function draw() {
     ctx.closePath();
     ctx.stroke();
 
-    points.forEach((p,i)=>{
+    // dots
+    points.forEach((p, i) => {
         ctx.fillStyle = i === activeQuadrant ? "#FFD700" : "#FF5722";
         ctx.beginPath();
-        ctx.arc(p.x,p.y,10,0,Math.PI*2);
+        ctx.arc(p.x, p.y, 12, 0, Math.PI*2);
         ctx.fill();
     });
 
     if (gameRunning) {
-        scoreEl.textContent =
-            `Time: ${((Date.now()-startTime)/1000).toFixed(1)}s`;
+        scoreEl.textContent = `Time: ${((Date.now()-startTime)/1000).toFixed(1)}s`;
     }
 }
 
-/* =======================
-   LOOP
-======================= */
 function loop() {
     update();
     draw();
@@ -282,38 +247,37 @@ function loop() {
 }
 loop();
 
-/* =======================
-   START GAME
-======================= */
+/* Start game */
 function startGame(e) {
     if (e) e.preventDefault();
+    if (gameRunning) return;
 
-    console.log("START pressed");
+    console.log("START triggered");
 
     startBtn.style.display = "none";
     gameRunning = true;
-	gracePeriod = 60; // ~1 second at 60fps
+    gracePeriod = 90;           // ~1.5s grace
     startTime = Date.now();
 
     resetPoints();
     randomizeAll();
 
+    // Calibrate once
     function calibrate(ev) {
         baseBeta = ev.beta || 0;
         baseGamma = ev.gamma || 0;
+        console.log("Calibrated → β:", baseBeta, "γ:", baseGamma);
         window.removeEventListener("deviceorientation", calibrate);
-        console.log("Calibrated:", baseBeta, baseGamma);
     }
 
-    window.addEventListener("deviceorientation", calibrate);
+    // Add listeners only once
+    window.addEventListener("deviceorientation", calibrate, { once: true });
     window.addEventListener("deviceorientation", handleOrientation);
 }
 
-// Mobile-first
-startBtn.addEventListener("touchstart", startGame, { passive: false });
-
-// Desktop fallback
+// Attach both events safely
 startBtn.addEventListener("click", startGame);
+startBtn.addEventListener("touchstart", startGame);
 
 </script>
 </body>
