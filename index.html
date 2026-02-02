@@ -73,6 +73,7 @@ window.addEventListener("resize", resize);
 let gameRunning = false;
 let startTime = 0;
 let activeQuadrant = null;
+let gracePeriod = 0;
 
 // Tilt data
 let baseBeta = 0;
@@ -194,6 +195,14 @@ function squareValid() {
 function update() {
     if (!gameRunning) return;
 
+if (gracePeriod > 0) {
+    gracePeriod--;
+} else if (!squareValid()) {
+    gameRunning = false;
+    alert(`Game Over! Time: ${((Date.now() - startTime)/1000).toFixed(1)}s`);
+    startBtn.style.display = "block";
+}
+
     points.forEach((p, i) => {
         if (i === activeQuadrant && activeQuadrant !== null) {
             const angle = Math.atan2(tiltY, tiltX);
@@ -287,6 +296,7 @@ function startGame(e) {
 
     startBtn.style.display = "none";
     gameRunning = true;
+	gracePeriod = 60; // ~1 second at 60fps
     startTime = Date.now();
 
     resetPoints();
