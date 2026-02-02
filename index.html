@@ -1,326 +1,302 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tilt Square</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            background: #1a1a1a;
-            overflow: hidden;
-            touch-action: none;
-        }
-        #gameCanvas {
-            display: block;
-            background: #0a0a0a;
-        }
-        #startBtn {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            padding: 20px 40px;
-            font-size: 24px;
-            background: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-        }
-        #score {
-            position: absolute;
-            top: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 24px;
-            color: white;
-            font-family: monospace;
-        }
-    </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tilt Square</title>
+
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+body {
+    background: #1a1a1a;
+    overflow: hidden;
+    touch-action: none;
+}
+#gameCanvas {
+    display: block;
+    background: #0a0a0a;
+}
+#startBtn {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 20px 40px;
+    font-size: 24px;
+    background: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+}
+#score {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 24px;
+    color: white;
+    font-family: monospace;
+}
+</style>
 </head>
+
 <body>
-    <canvas id="gameCanvas"></canvas>
-    <div id="score">Time: 0s</div>
-    <button id="startBtn">START</button>
+<canvas id="gameCanvas"></canvas>
+<div id="score">Time: 0.0s</div>
+<button id="startBtn">START</button>
 
-    <script>
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        const startBtn = document.getElementById('startBtn');
-        const scoreEl = document.getElementById('score');
+<script>
+/* =======================
+   CANVAS SETUP
+======================= */
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+const startBtn = document.getElementById("startBtn");
+const scoreEl = document.getElementById("score");
 
-        // Force landscape
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        
-        // Game state
-        let gameRunning = false;
-        let startTime = 0;
-        let tiltX = 0;
-        let tiltY = 0;
-        let baseGravityX = 0;
-        let baseGravityY = 0;
-        let activeQuadrant = null; // 0=TL, 1=TR, 2=BL, 3=BR
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener("resize", resize);
 
-        // Four corner points
-        let points = [
-            { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 }, // Top Left
-            { x: canvas.width * 0.7, y: canvas.height * 0.3, vx: 0, vy: 0 }, // Top Right
-            { x: canvas.width * 0.3, y: canvas.height * 0.7, vx: 0, vy: 0 }, // Bottom Left
-            { x: canvas.width * 0.7, y: canvas.height * 0.7, vx: 0, vy: 0 }  // Bottom Right
-        ];
+/* =======================
+   GAME STATE
+======================= */
+let gameRunning = false;
+let startTime = 0;
+let activeQuadrant = null;
 
-        // Initialize random velocities
-        function randomizePoint(index) {
-            const speed = 0.1;
-            const angle = Math.random() * Math.PI * 2;
-            points[index].vx = Math.cos(angle) * speed;
-            points[index].vy = Math.sin(angle) * speed;
-        }
+// Tilt data
+let baseBeta = 0;
+let baseGamma = 0;
+let tiltX = 0;
+let tiltY = 0;
 
-        function randomizeAllPoints() {
-            points.forEach((_, i) => randomizePoint(i));
-        }
+/* =======================
+   POINTS
+======================= */
+let points = [];
 
-        // Check if lines intersect
-        function linesIntersect(p1, p2, p3, p4) {
-            const det = (p2.x - p1.x) * (p4.y - p3.y) - (p4.x - p3.x) * (p2.y - p1.y);
-            if (det === 0) return false;
-            
-            const lambda = ((p4.y - p3.y) * (p4.x - p1.x) + (p3.x - p4.x) * (p4.y - p1.y)) / det;
-            const gamma = ((p1.y - p2.y) * (p4.x - p1.x) + (p2.x - p1.x) * (p4.y - p1.y)) / det;
-            
-            return (0 < lambda && lambda < 1) && (0 < gamma && gamma < 1);
-        }
+function resetPoints() {
+    points = [
+        { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 }, // TL
+        { x: canvas.width * 0.7, y: canvas.height * 0.3, vx: 0, vy: 0 }, // TR
+        { x: canvas.width * 0.3, y: canvas.height * 0.7, vx: 0, vy: 0 }, // BL
+        { x: canvas.width * 0.7, y: canvas.height * 0.7, vx: 0, vy: 0 }  // BR
+    ];
+}
 
-        // Check if square is valid (no crossing lines)
-        function isSquareValid() {
-            // Check all line combinations
-            // Lines: 0-1 (top), 1-3 (right), 3-2 (bottom), 2-0 (left)
-            const lines = [
-                [0, 1], // top
-                [1, 3], // right
-                [3, 2], // bottom
-                [2, 0]  // left
-            ];
-            
-            // Check if any edge crosses another edge
-            for (let i = 0; i < lines.length; i++) {
-                for (let j = i + 2; j < lines.length; j++) {
-                    if (j === i + 2 && i === 0) continue; // Adjacent edges
-                    
-                    const [a1, a2] = lines[i];
-                    const [b1, b2] = lines[j];
-                    
-                    if (linesIntersect(points[a1], points[a2], points[b1], points[b2])) {
-                        return false;
-                    }
-                }
-            }
-            
-            return true;
-        }
+function randomizePoint(i) {
+    const speed = 0.8;
+    const a = Math.random() * Math.PI * 2;
+    points[i].vx = Math.cos(a) * speed;
+    points[i].vy = Math.sin(a) * speed;
+}
 
-        // Handle tilt using gravity sensor
-        function handleTilt(e) {
-            if (!e.accelerationIncludingGravity) return;
-            
-            const gx = e.accelerationIncludingGravity.x;
-            const gy = e.accelerationIncludingGravity.y;
-            
-            if (gx === null || gy === null) return;
-            
-            // Calculate relative tilt from baseline (calibrated neutral position)
-            tiltX = gx - baseGravityX;
-            tiltY = gy - baseGravityY;
-            
-            // Clamp to reasonable range
-            tiltX = Math.max(-10, Math.min(10, tiltX));
-            tiltY = Math.max(-10, Math.min(10, tiltY));
-        }
+function randomizeAll() {
+    for (let i = 0; i < points.length; i++) {
+        randomizePoint(i);
+    }
+}
 
-        // Handle touch to select quadrant
-        canvas.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            const touch = e.touches[0];
-            const rect = canvas.getBoundingClientRect();
-            const x = touch.clientX - rect.left;
-            const y = touch.clientY - rect.top;
-            
-            // Determine quadrant
-            const midX = canvas.width / 2;
-            const midY = canvas.height / 2;
-            
-            if (x < midX && y < midY) activeQuadrant = 0; // Top Left
-            else if (x >= midX && y < midY) activeQuadrant = 1; // Top Right
-            else if (x < midX && y >= midY) activeQuadrant = 2; // Bottom Left
-            else activeQuadrant = 3; // Bottom Right
-            
-            // Randomize other 3 points
-            points.forEach((_, i) => {
-                if (i !== activeQuadrant) {
-                    randomizePoint(i);
-                }
-            });
-        });
+/* =======================
+   ORIENTATION CONTROL
+======================= */
+function handleOrientation(e) {
+    if (e.beta == null || e.gamma == null) return;
 
-        canvas.addEventListener('touchend', () => {
-            activeQuadrant = null;
-        });
+    // Landscape-friendly mapping
+    tiltX = e.gamma - baseGamma; // left / right
+    tiltY = e.beta  - baseBeta;  // forward / back
 
-        // Update physics
-        function update() {
-            if (!gameRunning) return;
-            
-            // Update each point
-            points.forEach((p, i) => {
-                if (i === activeQuadrant && activeQuadrant !== null) {
-                    // Controlled by tilt - FULL 360° DIRECTION
-                    // Calculate angle from tilt
-                    const angle = Math.atan2(tiltY, tiltX);
-                    // Calculate speed from tilt magnitude
-                    const tiltMagnitude = Math.sqrt(tiltX * tiltX + tiltY * tiltY);
-                    const speed = Math.min(tiltMagnitude * 0.15, 5); // Cap max speed
-                    
-                    // Set velocity based on tilt direction
-                    p.vx = Math.cos(angle) * speed;
-                    p.vy = Math.sin(angle) * speed;
-                }
-                
-                // Move point
-                p.x += p.vx;
-                p.y += p.vy;
-                
-                // Bounce off walls
-                if (p.x < 20 || p.x > canvas.width - 20) {
-                    p.vx *= -1;
-                    p.x = Math.max(20, Math.min(canvas.width - 20, p.x));
-                }
-                if (p.y < 20 || p.y > canvas.height - 20) {
-                    p.vy *= -1;
-                    p.y = Math.max(20, Math.min(canvas.height - 20, p.y));
-                }
-            });
-            
-            // Check if square is still valid
-            if (!isSquareValid()) {
-                gameRunning = false;
-                alert(`Game Over! Time: ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
-                startBtn.style.display = 'block';
+    tiltX = Math.max(-30, Math.min(30, tiltX));
+    tiltY = Math.max(-30, Math.min(30, tiltY));
+}
+
+/* =======================
+   TOUCH CONTROLS
+======================= */
+canvas.addEventListener("touchstart", e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    const r = canvas.getBoundingClientRect();
+    const x = t.clientX - r.left;
+    const y = t.clientY - r.top;
+
+    const mx = canvas.width / 2;
+    const my = canvas.height / 2;
+
+    if (x < mx && y < my) activeQuadrant = 0;
+    else if (x >= mx && y < my) activeQuadrant = 1;
+    else if (x < mx && y >= my) activeQuadrant = 2;
+    else activeQuadrant = 3;
+
+    // Randomize the other 3
+    for (let i = 0; i < points.length; i++) {
+        if (i !== activeQuadrant) randomizePoint(i);
+    }
+});
+
+canvas.addEventListener("touchend", () => {
+    activeQuadrant = null;
+});
+
+/* =======================
+   GEOMETRY CHECK
+======================= */
+function linesIntersect(p1, p2, p3, p4) {
+    const d =
+        (p2.x - p1.x) * (p4.y - p3.y) -
+        (p2.y - p1.y) * (p4.x - p3.x);
+
+    if (d === 0) return false;
+
+    const u =
+        ((p3.x - p1.x) * (p4.y - p3.y) -
+         (p3.y - p1.y) * (p4.x - p3.x)) / d;
+
+    const v =
+        ((p3.x - p1.x) * (p2.y - p1.y) -
+         (p3.y - p1.y) * (p2.x - p1.x)) / d;
+
+    return u > 0 && u < 1 && v > 0 && v < 1;
+}
+
+function squareValid() {
+    const edges = [
+        [0,1],[1,3],[3,2],[2,0]
+    ];
+
+    for (let i = 0; i < edges.length; i++) {
+        for (let j = i + 2; j < edges.length; j++) {
+            if (i === 0 && j === 2) continue;
+            const [a,b] = edges[i];
+            const [c,d] = edges[j];
+            if (linesIntersect(points[a], points[b], points[c], points[d])) {
+                return false;
             }
         }
+    }
+    return true;
+}
 
-        // Draw
-        function draw() {
-            // Clear
-            ctx.fillStyle = '#0a0a0a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw quadrant dividers (faint)
-            ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(canvas.width / 2, 0);
-            ctx.lineTo(canvas.width / 2, canvas.height);
-            ctx.moveTo(0, canvas.height / 2);
-            ctx.lineTo(canvas.width, canvas.height / 2);
-            ctx.stroke();
-            
-            // Highlight active quadrant
-            if (activeQuadrant !== null) {
-                ctx.fillStyle = 'rgba(76, 175, 80, 0.1)';
-                const qx = activeQuadrant % 2 === 0 ? 0 : canvas.width / 2;
-                const qy = activeQuadrant < 2 ? 0 : canvas.height / 2;
-                ctx.fillRect(qx, qy, canvas.width / 2, canvas.height / 2);
-            }
-            
-            // Draw square (connect the 4 points)
-            ctx.strokeStyle = '#4CAF50';
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.moveTo(points[0].x, points[0].y);
-            ctx.lineTo(points[1].x, points[1].y);
-            ctx.lineTo(points[3].x, points[3].y);
-            ctx.lineTo(points[2].x, points[2].y);
-            ctx.closePath();
-            ctx.stroke();
-            
-            // Draw points
-            points.forEach((p, i) => {
-                ctx.fillStyle = i === activeQuadrant ? '#FFD700' : '#FF5722';
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
-                ctx.fill();
-                
-                // Label
-                ctx.fillStyle = 'white';
-                ctx.font = '12px monospace';
-                ctx.textAlign = 'center';
-                const labels = ['TL', 'TR', 'BL', 'BR'];
-                ctx.fillText(labels[i], p.x, p.y - 15);
-            });
-            
-            // Update score
-            if (gameRunning) {
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                scoreEl.textContent = `Time: ${elapsed}s`;
-            }
+/* =======================
+   UPDATE LOOP
+======================= */
+function update() {
+    if (!gameRunning) return;
+
+    points.forEach((p, i) => {
+        if (i === activeQuadrant && activeQuadrant !== null) {
+            const angle = Math.atan2(tiltY, tiltX);
+            const mag = Math.hypot(tiltX, tiltY);
+            const speed = Math.min(mag * 0.1, 5);
+
+            p.vx = Math.cos(angle) * speed;
+            p.vy = Math.sin(angle) * speed;
+        } else {
+            // light damping for uncontrolled points
+            p.vx *= 0.99;
+            p.vy *= 0.99;
         }
 
-        // Game loop
-        function gameLoop() {
-            update();
-            draw();
-            requestAnimationFrame(gameLoop);
-        }
+        p.x += p.vx;
+        p.y += p.vy;
 
-        // Start game
-        function startGame() {
-            startBtn.style.display = 'none';
-            gameRunning = true;
-            startTime = Date.now();
-            
-            // Reset calibration
-            baseGravityX = 0;
-            baseGravityY = 0;
-            
-            // Reset points to corners
-            points = [
-                { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 },
-                { x: canvas.width * 0.7, y: canvas.height * 0.3, vx: 0, vy: 0 },
-                { x: canvas.width * 0.3, y: canvas.height * 0.7, vx: 0, vy: 0 },
-                { x: canvas.width * 0.7, y: canvas.height * 0.7, vx: 0, vy: 0 }
-            ];
-            
-            randomizeAllPoints();
-            
-            // Start motion sensor and calibrate
-            window.addEventListener('devicemotion', handleTilt);
-            
-            // Calibrate neutral position after a short delay
-            setTimeout(() => {
-                window.addEventListener('devicemotion', (e) => {
-                    if (baseGravityX === 0 && e.accelerationIncludingGravity) {
-                        baseGravityX = e.accelerationIncludingGravity.x || 0;
-                        baseGravityY = e.accelerationIncludingGravity.y || 0;
-                        console.log('Calibrated! Neutral position set.');
-                    }
-                }, { once: true });
-            }, 100);
-        }
+        if (p.x < 20 || p.x > canvas.width - 20) p.vx *= -1;
+        if (p.y < 20 || p.y > canvas.height - 20) p.vy *= -1;
+    });
 
-        startBtn.addEventListener('click', startGame);
-        gameLoop();
+    if (!squareValid()) {
+        gameRunning = false;
+        alert(`Game Over! Time: ${((Date.now() - startTime)/1000).toFixed(1)}s`);
+        startBtn.style.display = "block";
+    }
+}
 
-        window.addEventListener('resize', () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-        });
-    </script>
+/* =======================
+   DRAW
+======================= */
+function draw() {
+    ctx.fillStyle = "#0a0a0a";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    ctx.strokeStyle = "rgba(255,255,255,0.1)";
+    ctx.beginPath();
+    ctx.moveTo(canvas.width/2,0);
+    ctx.lineTo(canvas.width/2,canvas.height);
+    ctx.moveTo(0,canvas.height/2);
+    ctx.lineTo(canvas.width,canvas.height/2);
+    ctx.stroke();
+
+    if (activeQuadrant !== null) {
+        ctx.fillStyle = "rgba(76,175,80,0.15)";
+        const qx = activeQuadrant % 2 === 0 ? 0 : canvas.width/2;
+        const qy = activeQuadrant < 2 ? 0 : canvas.height/2;
+        ctx.fillRect(qx, qy, canvas.width/2, canvas.height/2);
+    }
+
+    ctx.strokeStyle = "#4CAF50";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    ctx.lineTo(points[1].x, points[1].y);
+    ctx.lineTo(points[3].x, points[3].y);
+    ctx.lineTo(points[2].x, points[2].y);
+    ctx.closePath();
+    ctx.stroke();
+
+    points.forEach((p,i)=>{
+        ctx.fillStyle = i === activeQuadrant ? "#FFD700" : "#FF5722";
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,10,0,Math.PI*2);
+        ctx.fill();
+    });
+
+    if (gameRunning) {
+        scoreEl.textContent =
+            `Time: ${((Date.now()-startTime)/1000).toFixed(1)}s`;
+    }
+}
+
+/* =======================
+   LOOP
+======================= */
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+loop();
+
+/* =======================
+   START GAME
+======================= */
+startBtn.addEventListener("click", () => {
+    startBtn.style.display = "none";
+    gameRunning = true;
+    startTime = Date.now();
+
+    resetPoints();
+    randomizeAll();
+
+    function calibrate(e) {
+        baseBeta = e.beta || 0;
+        baseGamma = e.gamma || 0;
+        window.removeEventListener("deviceorientation", calibrate);
+        console.log("Calibrated:", baseBeta, baseGamma);
+    }
+
+    window.addEventListener("deviceorientation", calibrate);
+    window.addEventListener("deviceorientation", handleOrientation);
+});
+</script>
 </body>
 </html>
