@@ -198,9 +198,10 @@ function update() {
 if (gracePeriod > 0) {
     gracePeriod--;
 } else if (!squareValid()) {
-    gameRunning = false;
-    alert(`Game Over! Time: ${((Date.now() - startTime)/1000).toFixed(1)}s`);
-    startBtn.style.display = "block";
+        gameRunning = false;
+        alert(`Game Over! Time: ${((Date.now() - startTime)/1000).toFixed(1)}s`);
+        startBtn.style.display = "block";
+        return;
 }
 
     points.forEach((p, i) => {
@@ -224,11 +225,6 @@ if (gracePeriod > 0) {
         if (p.y < 20 || p.y > canvas.height - 20) p.vy *= -1;
     });
 
-    if (!squareValid()) {
-        gameRunning = false;
-        alert(`Game Over! Time: ${((Date.now() - startTime)/1000).toFixed(1)}s`);
-        startBtn.style.display = "block";
-    }
 }
 
 /* =======================
