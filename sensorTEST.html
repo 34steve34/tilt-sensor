@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#4CAF50">
+    <title>Tilt Sensor PWA</title>
+    <link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiVGlsdCBTZW5zb3IiLCJzaG9ydF9uYW1lIjoiVGlsdCIsInN0YXJ0X3VybCI6Ii8iLCJkaXNwbGF5Ijoic3RhbmRhbG9uZSIsImJhY2tncm91bmRfY29sb3IiOiIjZmZmZmZmIiwidGhlbWVfY29sb3IiOiIjNENBRjUwIn0=">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+        }
+        .container {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 40px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            max-width: 400px;
+            width: 100%;
+        }
+        h1 {
+            margin-bottom: 20px;
+            font-size: 2em;
+        }
+        .sensor-data {
+            font-size: 1.5em;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+        }
+        button {
+            margin: 10px;
+            padding: 15px 30px;
+            font-size: 1.1em;
+            background: white;
+            color: #667eea;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:active {
+            transform: scale(0.95);
+        }
+        .status {
+            margin-top: 20px;
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        .visual {
+            width: 120px;
+            height: 120px;
+            background: white;
+            border-radius: 50%;
+            margin: 20px auto;
+            position: relative;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.1);
+        }
+        .ball {
+            width: 40px;
+            height: 40px;
+            background: #667eea;
+            border-radius: 50%;
+            position: absolute;
+            top: 40px;
+            left: 40px;
+            transition: all 0.05s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+        .warning {
+            background: rgba(255, 193, 7, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            font-size: 0.85em;
+            line-height: 1.5;
+        }
+        .warning a {
+            color: white;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 Tilt Sensor</h1>
+        
+        <div class="visual">
+            <div class="ball" id="ball"></div>
+        </div>
+        
+        <div class="sensor-data">X: <span id="x">--</span>°</div>
+        <div class="sensor-data">Y: <span id="y">--</span>°</div>
+        <div class="sensor-data">Z: <span id="z">--</span>°</div>
+        
+        <button id="requestBtn">Request Sensor Access</button>
+        
+        <div class="status" id="status">Tap button to request permissions</div>
+        
+        <div class="warning" id="warning" style="display:none;">
+            ⚠️ <strong>Sensors Blocked!</strong><br>
+            To fix this:<br>
+            1. Tap the 🔒 or ⓘ icon in the address bar<br>
+            2. Go to "Site settings" or "Permissions"<br>
+            3. Enable "Motion sensors"<br>
+            4. Reload the page
+        </div>
+    </div>
+
+    <script>
+        const xElement = document.getElementById('x');
+        const yElement = document.getElementById('y');
+        const zElement = document.getElementById('z');
+        const statusElement = document.getElementById('status');
+        const warningElement = document.getElementById('warning');
+        const requestBtn = document.getElementById('requestBtn');
+        const ball = document.getElementById('ball');
+        
+        let eventCount = 0;
+        let lastValues = { x: null, y: null, z: null };
+
+        function updateDisplay(x, y, z) {
+            if (x === null || y === null) return;
+            
+            eventCount++;
+            lastValues = { x, y, z };
+            
+            xElement.textContent = x.toFixed(1);
+            yElement.textContent = y.toFixed(1);
+            zElement.textContent = z ? z.toFixed(1) : '--';
+            
+            // Move ball
+            const ballX = 40 + (y * 0.8);
+            const ballY = 40 + (x * 0.8);
+            ball.style.left = Math.max(0, Math.min(80, ballX)) + 'px';
+            ball.style.top = Math.max(0, Math.min(80, ballY)) + 'px';
+            
+            if (eventCount === 1) {
+                statusElement.textContent = '✅ Sensor working!';
+                statusElement.style.color = '#4CAF50';
+                requestBtn.style.display = 'none';
+            } else if (eventCount % 30 === 0) {
+                statusElement.textContent = `✅ Active (${eventCount} updates)`;
+            }
+        }
+
+        async function requestSensorAccess() {
+            requestBtn.disabled = true;
+            statusElement.textContent = 'Requesting permission...';
+            
+            try {
+                // Try Generic Sensor API permission (most reliable on Android)
+                if ('permissions' in navigator) {
+                    try {
+                        const result = await navigator.permissions.query({ name: 'accelerometer' });
+                        console.log('Accelerometer permission:', result.state);
+                        
+                        const gyroResult = await navigator.permissions.query({ name: 'gyroscope' });
+                        console.log('Gyroscope permission:', gyroResult.state);
+                        
+                        if (result.state === 'denied' || gyroResult.state === 'denied') {
+                            showWarning();
+                            return;
+                        }
+                    } catch (e) {
+                        console.log('Permission query failed:', e);
+                    }
+                }
+
+                // Start listening to orientation events
+                statusElement.textContent = 'Starting sensors...';
+                
+                window.addEventListener('deviceorientation', (event) => {
+                    if (event.beta !== null && event.gamma !== null) {
+                        updateDisplay(event.beta, event.gamma, event.alpha);
+                    }
+                });
+
+                window.addEventListener('devicemotion', (event) => {
+                    if (eventCount === 0 && event.accelerationIncludingGravity) {
+                        const acc = event.accelerationIncludingGravity;
+                        if (acc.x !== null) {
+                            // Convert acceleration to angles
+                            const x = Math.atan2(acc.y, Math.sqrt(acc.x*acc.x + acc.z*acc.z)) * (180/Math.PI);
+                            const y = Math.atan2(acc.x, Math.sqrt(acc.y*acc.y + acc.z*acc.z)) * (180/Math.PI);
+                            updateDisplay(x, y, null);
+                        }
+                    }
+                });
+
+                // Wait to see if we get data
+                setTimeout(() => {
+                    if (eventCount === 0) {
+                        showWarning();
+                    }
+                }, 3000);
+
+            } catch (error) {
+                console.error('Error:', error);
+                showWarning();
+            }
+        }
+
+        function showWarning() {
+            statusElement.textContent = '❌ Permission denied or sensors blocked';
+            statusElement.style.color = '#ff5252';
+            warningElement.style.display = 'block';
+            requestBtn.disabled = false;
+            requestBtn.textContent = 'Try Again';
+        }
+
+        requestBtn.addEventListener('click', requestSensorAccess);
+
+        // Check if already granted and auto-start
+        if (navigator.permissions) {
+            navigator.permissions.query({ name: 'accelerometer' })
+                .then(result => {
+                    if (result.state === 'granted') {
+                        console.log('Already granted, auto-starting');
+                        setTimeout(requestSensorAccess, 500);
+                    }
+                })
+                .catch(() => {
+                    // Ignore - will require manual start
+                });
+        }
+    </script>
+</body>
+</html>
