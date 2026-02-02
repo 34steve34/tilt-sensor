@@ -69,7 +69,7 @@ function resize() {
 resize();
 window.addEventListener("resize", resize);
 
-/* Game state */
+// Game state
 let gameRunning = false;
 let startTime = 0;
 let activeQuadrant = null;
@@ -102,7 +102,7 @@ function randomizeAll() {
     for (let i = 0; i < points.length; i++) randomizePoint(i);
 }
 
-/* Orientation */
+// Orientation handling
 function handleOrientation(e) {
     if (!e.beta && !e.gamma) return;
     tiltX = (e.gamma || 0) - baseGamma;
@@ -111,7 +111,7 @@ function handleOrientation(e) {
     tiltY = Math.max(-35, Math.min(35, tiltY));
 }
 
-/* Touch controls */
+// Touch controls
 canvas.addEventListener("touchstart", e => {
     if (!gameRunning) return;
     e.preventDefault();
@@ -137,7 +137,7 @@ canvas.addEventListener("touchend", () => {
     activeQuadrant = null;
 });
 
-/* Intersection check */
+// Line intersection check
 function linesIntersect(p1, p2, p3, p4) {
     const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
     if (d === 0) return false;
@@ -150,7 +150,7 @@ function squareValid() {
     const edges = [[0,1],[1,3],[3,2],[2,0]];
     for (let i = 0; i < edges.length; i++) {
         for (let j = i + 2; j < edges.length; j++) {
-            if (i === 0 && j === 2) continue; // skip opposite edges check
+            if (i === 0 && j === 2) continue;
             const [a,b] = edges[i];
             const [c,d] = edges[j];
             if (linesIntersect(points[a], points[b], points[c], points[d])) {
@@ -161,7 +161,7 @@ function squareValid() {
     return true;
 }
 
-/* Update */
+// Update logic
 function update() {
     if (!gameRunning) return;
 
@@ -189,18 +189,17 @@ function update() {
         p.x += p.vx;
         p.y += p.vy;
 
-        // Bounce
         if (p.x < 25 || p.x > canvas.width - 25) p.vx *= -1;
         if (p.y < 25 || p.y > canvas.height - 25) p.vy *= -1;
     });
 }
 
-/* Draw */
+// Draw function (with safety check to prevent crash before game starts)
 function draw() {
     ctx.fillStyle = "#0a0a0a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // quadrant lines
+    // Always draw quadrant guide lines
     ctx.strokeStyle = "rgba(255,255,255,0.08)";
     ctx.beginPath();
     ctx.moveTo(canvas.width/2, 0);
@@ -209,6 +208,9 @@ function draw() {
     ctx.lineTo(canvas.width, canvas.height/2);
     ctx.stroke();
 
+    // Skip game rendering until points are initialized
+    if (!gameRunning || points.length === 0) return;
+
     if (activeQuadrant !== null) {
         ctx.fillStyle = "rgba(76,175,80,0.12)";
         const qx = activeQuadrant % 2 === 0 ? 0 : canvas.width/2;
@@ -216,7 +218,6 @@ function draw() {
         ctx.fillRect(qx, qy, canvas.width/2, canvas.height/2);
     }
 
-    // square
     ctx.strokeStyle = "#4CAF50";
     ctx.lineWidth = 4;
     ctx.beginPath();
@@ -227,7 +228,6 @@ function draw() {
     ctx.closePath();
     ctx.stroke();
 
-    // dots
     points.forEach((p, i) => {
         ctx.fillStyle = i === activeQuadrant ? "#FFD700" : "#FF5722";
         ctx.beginPath();
@@ -247,38 +247,31 @@ function loop() {
 }
 loop();
 
-/* Start game */
+// Start game handler
 function startGame(e) {
     if (e) e.preventDefault();
     if (gameRunning) return;
 
-    console.log("START triggered");
-
     startBtn.style.display = "none";
     gameRunning = true;
-    gracePeriod = 90;           // ~1.5s grace
+    gracePeriod = 90; // ~1.5s at 60fps
     startTime = Date.now();
 
     resetPoints();
     randomizeAll();
 
-    // Calibrate once
     function calibrate(ev) {
         baseBeta = ev.beta || 0;
         baseGamma = ev.gamma || 0;
-        console.log("Calibrated → β:", baseBeta, "γ:", baseGamma);
         window.removeEventListener("deviceorientation", calibrate);
     }
 
-    // Add listeners only once
     window.addEventListener("deviceorientation", calibrate, { once: true });
     window.addEventListener("deviceorientation", handleOrientation);
 }
 
-// Attach both events safely
 startBtn.addEventListener("click", startGame);
 startBtn.addEventListener("touchstart", startGame);
-
 </script>
 </body>
 </html>
