@@ -178,7 +178,7 @@
                     const angle = Math.atan2(tiltY, tiltX);
                     // Calculate speed from tilt magnitude
                     const tiltMagnitude = Math.sqrt(tiltX * tiltX + tiltY * tiltY);
-                    const speed = Math.min(tiltMagnitude * 0.15, 5); // Cap max speed
+                    const speed = Math.min(tiltMagnitude * 0.015, 0.5); // Cap max speed
                     
                     // Set velocity based on tilt direction
                     p.vx = Math.cos(angle) * speed;
