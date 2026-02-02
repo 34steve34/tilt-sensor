@@ -280,7 +280,11 @@ loop();
 /* =======================
    START GAME
 ======================= */
-startBtn.addEventListener("click", () => {
+function startGame(e) {
+    if (e) e.preventDefault();
+
+    console.log("START pressed");
+
     startBtn.style.display = "none";
     gameRunning = true;
     startTime = Date.now();
@@ -288,16 +292,23 @@ startBtn.addEventListener("click", () => {
     resetPoints();
     randomizeAll();
 
-    function calibrate(e) {
-        baseBeta = e.beta || 0;
-        baseGamma = e.gamma || 0;
+    function calibrate(ev) {
+        baseBeta = ev.beta || 0;
+        baseGamma = ev.gamma || 0;
         window.removeEventListener("deviceorientation", calibrate);
         console.log("Calibrated:", baseBeta, baseGamma);
     }
 
     window.addEventListener("deviceorientation", calibrate);
     window.addEventListener("deviceorientation", handleOrientation);
-});
+}
+
+// Mobile-first
+startBtn.addEventListener("touchstart", startGame, { passive: false });
+
+// Desktop fallback
+startBtn.addEventListener("click", startGame);
+
 </script>
 </body>
 </html>
