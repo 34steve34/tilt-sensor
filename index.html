@@ -63,6 +63,8 @@
         let startTime = 0;
         let tiltX = 0;
         let tiltY = 0;
+        let baseGravityX = 0;
+        let baseGravityY = 0;
         let activeQuadrant = null; // 0=TL, 1=TR, 2=BL, 3=BR
 
         // Four corner points
@@ -124,17 +126,22 @@
             return true;
         }
 
-        // Handle tilt
+        // Handle tilt using gravity sensor
         function handleTilt(e) {
-            if (e.beta === null || e.gamma === null) return;
+            if (!e.accelerationIncludingGravity) return;
             
-            // In landscape: gamma is tilt left/right, beta is tilt forward/back
-            tiltX = e.gamma;  // -90 to 90 (left to right)
-            tiltY = e.beta;   // -180 to 180 (forward to back)
+            const gx = e.accelerationIncludingGravity.x;
+            const gy = e.accelerationIncludingGravity.y;
             
-            // Normalize to reasonable range
-            tiltX = Math.max(-45, Math.min(45, tiltX));
-            tiltY = Math.max(-45, Math.min(45, tiltY));
+            if (gx === null || gy === null) return;
+            
+            // Calculate relative tilt from baseline (calibrated neutral position)
+            tiltX = gx - baseGravityX;
+            tiltY = gy - baseGravityY;
+            
+            // Clamp to reasonable range
+            tiltX = Math.max(-10, Math.min(10, tiltX));
+            tiltY = Math.max(-10, Math.min(10, tiltY));
         }
 
         // Handle touch to select quadrant
@@ -178,7 +185,7 @@
                     const angle = Math.atan2(tiltY, tiltX);
                     // Calculate speed from tilt magnitude
                     const tiltMagnitude = Math.sqrt(tiltX * tiltX + tiltY * tiltY);
-                    const speed = Math.min(tiltMagnitude * 0.015, 0.5); // Cap max speed
+                    const speed = Math.min(tiltMagnitude * 0.15, 5); // Cap max speed
                     
                     // Set velocity based on tilt direction
                     p.vx = Math.cos(angle) * speed;
@@ -278,6 +285,10 @@
             gameRunning = true;
             startTime = Date.now();
             
+            // Reset calibration
+            baseGravityX = 0;
+            baseGravityY = 0;
+            
             // Reset points to corners
             points = [
                 { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 },
@@ -288,7 +299,19 @@
             
             randomizeAllPoints();
             
-            window.addEventListener('deviceorientation', handleTilt);
+            // Start motion sensor and calibrate
+            window.addEventListener('devicemotion', handleTilt);
+            
+            // Calibrate neutral position after a short delay
+            setTimeout(() => {
+                window.addEventListener('devicemotion', (e) => {
+                    if (baseGravityX === 0 && e.accelerationIncludingGravity) {
+                        baseGravityX = e.accelerationIncludingGravity.x || 0;
+                        baseGravityY = e.accelerationIncludingGravity.y || 0;
+                        console.log('Calibrated! Neutral position set.');
+                    }
+                }, { once: true });
+            }, 100);
         }
 
         startBtn.addEventListener('click', startGame);
