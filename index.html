@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tilt Rider</title>
+    <title>Tilt Square</title>
     <style>
         * {
             margin: 0;
@@ -11,22 +11,13 @@
             box-sizing: border-box;
         }
         body {
-            font-family: system-ui, -apple-system, sans-serif;
-            background: #87CEEB;
+            background: #1a1a1a;
             overflow: hidden;
             touch-action: none;
         }
         #gameCanvas {
             display: block;
-            background: #87CEEB;
-        }
-        #ui {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            font-size: 16px;
-            color: white;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            background: #0a0a0a;
         }
         #startBtn {
             position: absolute;
@@ -40,264 +31,268 @@
             border: none;
             border-radius: 10px;
             cursor: pointer;
-            font-weight: bold;
         }
-        #restartBtn {
+        #score {
             position: absolute;
-            bottom: 20px;
-            right: 20px;
-            padding: 15px 30px;
-            font-size: 18px;
-            background: #FF5722;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 24px;
             color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            display: none;
+            font-family: monospace;
         }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
-    <div id="ui">
-        Distance: <span id="distance">0</span>m<br>
-        Speed: <span id="speed">0</span>
-    </div>
+    <div id="score">Time: 0s</div>
     <button id="startBtn">START</button>
-    <button id="restartBtn">RESTART</button>
 
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const startBtn = document.getElementById('startBtn');
-        const restartBtn = document.getElementById('restartBtn');
+        const scoreEl = document.getElementById('score');
 
+        // Force landscape
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
-
-        // Bike properties
-        let bike = {
-            x: 150,
-            y: canvas.height - 200,
-            rotation: 0,
-            vx: 0,
-            vy: 0,
-            radius: 15,
-            wheelRadius: 12
-        };
-
-        // Tilt calibration - KEY FEATURE
-        let baseTilt = null;
-        let currentTilt = 0;
-        let relativeTilt = 0;
-
+        
         // Game state
-        let distance = 0;
-        let terrain = [];
-        let terrainOffset = 0;
         let gameRunning = false;
+        let startTime = 0;
+        let tiltX = 0;
+        let tiltY = 0;
+        let activeQuadrant = null; // 0=TL, 1=TR, 2=BL, 3=BR
 
-        // Generate simple terrain
-        function generateTerrain() {
-            terrain = [];
-            let y = canvas.height - 150;
+        // Four corner points
+        let points = [
+            { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 }, // Top Left
+            { x: canvas.width * 0.7, y: canvas.height * 0.3, vx: 0, vy: 0 }, // Top Right
+            { x: canvas.width * 0.3, y: canvas.height * 0.7, vx: 0, vy: 0 }, // Bottom Left
+            { x: canvas.width * 0.7, y: canvas.height * 0.7, vx: 0, vy: 0 }  // Bottom Right
+        ];
+
+        // Initialize random velocities
+        function randomizePoint(index) {
+            const speed = 2;
+            const angle = Math.random() * Math.PI * 2;
+            points[index].vx = Math.cos(angle) * speed;
+            points[index].vy = Math.sin(angle) * speed;
+        }
+
+        function randomizeAllPoints() {
+            points.forEach((_, i) => randomizePoint(i));
+        }
+
+        // Check if lines intersect
+        function linesIntersect(p1, p2, p3, p4) {
+            const det = (p2.x - p1.x) * (p4.y - p3.y) - (p4.x - p3.x) * (p2.y - p1.y);
+            if (det === 0) return false;
             
-            for (let x = 0; x < 5000; x += 30) {
-                // Random hills
-                y += (Math.random() - 0.5) * 20;
-                y = Math.max(canvas.height - 300, Math.min(canvas.height - 100, y));
-                terrain.push({ x, y });
+            const lambda = ((p4.y - p3.y) * (p4.x - p1.x) + (p3.x - p4.x) * (p4.y - p1.y)) / det;
+            const gamma = ((p1.y - p2.y) * (p4.x - p1.x) + (p2.x - p1.x) * (p4.y - p1.y)) / det;
+            
+            return (0 < lambda && lambda < 1) && (0 < gamma && gamma < 1);
+        }
+
+        // Check if square is valid (no crossing lines)
+        function isSquareValid() {
+            // Check all line combinations
+            // Lines: 0-1 (top), 1-3 (right), 3-2 (bottom), 2-0 (left)
+            const lines = [
+                [0, 1], // top
+                [1, 3], // right
+                [3, 2], // bottom
+                [2, 0]  // left
+            ];
+            
+            // Check if any edge crosses another edge
+            for (let i = 0; i < lines.length; i++) {
+                for (let j = i + 2; j < lines.length; j++) {
+                    if (j === i + 2 && i === 0) continue; // Adjacent edges
+                    
+                    const [a1, a2] = lines[i];
+                    const [b1, b2] = lines[j];
+                    
+                    if (linesIntersect(points[a1], points[a2], points[b1], points[b2])) {
+                        return false;
+                    }
+                }
             }
+            
+            return true;
         }
 
-        // Start game
-        function startGame() {
-            startBtn.style.display = 'none';
-            restartBtn.style.display = 'block';
-            gameRunning = true;
-            baseTilt = null;  // Reset calibration
-            distance = 0;
-            terrainOffset = 0;
-            bike.x = 150;
-            bike.y = canvas.height - 200;
-            bike.vx = 3;
-            bike.vy = 0;
-            bike.rotation = 0;
-            
-            generateTerrain();
-            
-            // Start tilt sensor
-            window.addEventListener('deviceorientation', handleTilt);
-            
-            gameLoop();
-        }
-
-        // Handle tilt - RELATIVE DETECTION
+        // Handle tilt
         function handleTilt(e) {
-            if (e.gamma === null) return;
+            if (e.beta === null || e.gamma === null) return;
             
-            currentTilt = e.gamma;  // -90 (left) to 90 (right)
+            // In landscape: gamma is tilt left/right, beta is tilt forward/back
+            tiltX = e.gamma;  // -90 to 90 (left to right)
+            tiltY = e.beta;   // -180 to 180 (forward to back)
             
-            // Calibrate on first read
-            if (baseTilt === null) {
-                baseTilt = currentTilt;
-            }
-            
-            // Calculate RELATIVE tilt from starting position
-            relativeTilt = currentTilt - baseTilt;
-            
-            // Clamp to reasonable range
-            relativeTilt = Math.max(-45, Math.min(45, relativeTilt));
+            // Normalize to reasonable range
+            tiltX = Math.max(-45, Math.min(45, tiltX));
+            tiltY = Math.max(-45, Math.min(45, tiltY));
         }
 
-        // Get terrain height at position
-        function getTerrainY(x) {
-            for (let i = 0; i < terrain.length - 1; i++) {
-                if (terrain[i].x <= x && terrain[i + 1].x >= x) {
-                    // Linear interpolation
-                    const t = (x - terrain[i].x) / (terrain[i + 1].x - terrain[i].x);
-                    return terrain[i].y + (terrain[i + 1].y - terrain[i].y) * t;
+        // Handle touch to select quadrant
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            
+            // Determine quadrant
+            const midX = canvas.width / 2;
+            const midY = canvas.height / 2;
+            
+            if (x < midX && y < midY) activeQuadrant = 0; // Top Left
+            else if (x >= midX && y < midY) activeQuadrant = 1; // Top Right
+            else if (x < midX && y >= midY) activeQuadrant = 2; // Bottom Left
+            else activeQuadrant = 3; // Bottom Right
+            
+            // Randomize other 3 points
+            points.forEach((_, i) => {
+                if (i !== activeQuadrant) {
+                    randomizePoint(i);
                 }
-            }
-            return canvas.height - 150;
-        }
+            });
+        });
 
-        // Physics update
-        function updatePhysics() {
+        canvas.addEventListener('touchend', () => {
+            activeQuadrant = null;
+        });
+
+        // Update physics
+        function update() {
             if (!gameRunning) return;
-
-            // Apply rotation from tilt
-            // Right tilt (positive) = lean back = negative rotation
-            bike.rotation += relativeTilt * -0.002;
             
-            // Apply angular damping
-            bike.rotation *= 0.95;
-            
-            // Gravity
-            bike.vy += 0.5;
-            
-            // Forward momentum
-            bike.vx = Math.max(2, bike.vx);
-            
-            // Rotation affects movement
-            bike.vx += Math.sin(bike.rotation) * 0.1;
-            bike.vy -= Math.sin(bike.rotation) * 0.2;
-            
-            // Update position
-            bike.x += bike.vx;
-            bike.y += bike.vy;
-            
-            // Terrain collision (simple)
-            const groundY = getTerrainY(bike.x + terrainOffset);
-            if (bike.y > groundY - bike.radius) {
-                bike.y = groundY - bike.radius;
-                bike.vy *= -0.3;  // Bounce
-                
-                // Landing rotation damping
-                if (Math.abs(bike.rotation) > 1.5) {
-                    // Crashed - too much rotation
-                    gameRunning = false;
+            // Update each point
+            points.forEach((p, i) => {
+                if (i === activeQuadrant && activeQuadrant !== null) {
+                    // Controlled by tilt - FULL 360° DIRECTION
+                    // Calculate angle from tilt
+                    const angle = Math.atan2(tiltY, tiltX);
+                    // Calculate speed from tilt magnitude
+                    const tiltMagnitude = Math.sqrt(tiltX * tiltX + tiltY * tiltY);
+                    const speed = Math.min(tiltMagnitude * 0.15, 5); // Cap max speed
+                    
+                    // Set velocity based on tilt direction
+                    p.vx = Math.cos(angle) * speed;
+                    p.vy = Math.sin(angle) * speed;
                 }
-            }
+                
+                // Move point
+                p.x += p.vx;
+                p.y += p.vy;
+                
+                // Bounce off walls
+                if (p.x < 20 || p.x > canvas.width - 20) {
+                    p.vx *= -1;
+                    p.x = Math.max(20, Math.min(canvas.width - 20, p.x));
+                }
+                if (p.y < 20 || p.y > canvas.height - 20) {
+                    p.vy *= -1;
+                    p.y = Math.max(20, Math.min(canvas.height - 20, p.y));
+                }
+            });
             
-            // Scroll terrain
-            if (bike.x > canvas.width / 3) {
-                terrainOffset += bike.vx;
-                bike.x = canvas.width / 3;
+            // Check if square is still valid
+            if (!isSquareValid()) {
+                gameRunning = false;
+                alert(`Game Over! Time: ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
+                startBtn.style.display = 'block';
             }
-            
-            distance = Math.floor(terrainOffset / 10);
         }
 
-        // Draw everything
+        // Draw
         function draw() {
             // Clear
-            ctx.fillStyle = '#87CEEB';
+            ctx.fillStyle = '#0a0a0a';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            // Draw terrain
-            ctx.fillStyle = '#8B4513';
+            // Draw quadrant dividers (faint)
+            ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+            ctx.lineWidth = 1;
             ctx.beginPath();
-            ctx.moveTo(0, canvas.height);
-            
-            for (let i = 0; i < terrain.length; i++) {
-                const screenX = terrain[i].x - terrainOffset;
-                if (screenX > -50 && screenX < canvas.width + 50) {
-                    ctx.lineTo(screenX, terrain[i].y);
-                }
-            }
-            
-            ctx.lineTo(canvas.width, canvas.height);
-            ctx.closePath();
-            ctx.fill();
-            
-            // Terrain outline
-            ctx.strokeStyle = '#654321';
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            for (let i = 0; i < terrain.length; i++) {
-                const screenX = terrain[i].x - terrainOffset;
-                if (screenX > -50 && screenX < canvas.width + 50) {
-                    if (i === 0) ctx.moveTo(screenX, terrain[i].y);
-                    else ctx.lineTo(screenX, terrain[i].y);
-                }
-            }
+            ctx.moveTo(canvas.width / 2, 0);
+            ctx.lineTo(canvas.width / 2, canvas.height);
+            ctx.moveTo(0, canvas.height / 2);
+            ctx.lineTo(canvas.width, canvas.height / 2);
             ctx.stroke();
             
-            // Draw bike (simple)
-            ctx.save();
-            ctx.translate(bike.x, bike.y);
-            ctx.rotate(bike.rotation);
+            // Highlight active quadrant
+            if (activeQuadrant !== null) {
+                ctx.fillStyle = 'rgba(76, 175, 80, 0.1)';
+                const qx = activeQuadrant % 2 === 0 ? 0 : canvas.width / 2;
+                const qy = activeQuadrant < 2 ? 0 : canvas.height / 2;
+                ctx.fillRect(qx, qy, canvas.width / 2, canvas.height / 2);
+            }
             
-            // Body
-            ctx.fillStyle = '#333';
-            ctx.fillRect(-20, -10, 40, 20);
-            
-            // Wheels
-            ctx.fillStyle = '#222';
+            // Draw square (connect the 4 points)
+            ctx.strokeStyle = '#4CAF50';
+            ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(-15, 10, bike.wheelRadius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(15, 10, bike.wheelRadius, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.moveTo(points[0].x, points[0].y);
+            ctx.lineTo(points[1].x, points[1].y);
+            ctx.lineTo(points[3].x, points[3].y);
+            ctx.lineTo(points[2].x, points[2].y);
+            ctx.closePath();
+            ctx.stroke();
             
-            // Rider
-            ctx.fillStyle = '#FF5722';
-            ctx.beginPath();
-            ctx.arc(0, -15, 8, 0, Math.PI * 2);
-            ctx.fill();
-            
-            ctx.restore();
-            
-            // Update UI
-            document.getElementById('distance').textContent = distance;
-            document.getElementById('speed').textContent = Math.floor(bike.vx);
-            
-            // Game over
-            if (!gameRunning && distance > 0) {
-                ctx.fillStyle = 'rgba(0,0,0,0.7)';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // Draw points
+            points.forEach((p, i) => {
+                ctx.fillStyle = i === activeQuadrant ? '#FFD700' : '#FF5722';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Label
                 ctx.fillStyle = 'white';
-                ctx.font = 'bold 48px sans-serif';
+                ctx.font = '12px monospace';
                 ctx.textAlign = 'center';
-                ctx.fillText('CRASHED!', canvas.width/2, canvas.height/2 - 30);
-                ctx.font = '32px sans-serif';
-                ctx.fillText(`Distance: ${distance}m`, canvas.width/2, canvas.height/2 + 30);
+                const labels = ['TL', 'TR', 'BL', 'BR'];
+                ctx.fillText(labels[i], p.x, p.y - 15);
+            });
+            
+            // Update score
+            if (gameRunning) {
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                scoreEl.textContent = `Time: ${elapsed}s`;
             }
         }
 
         // Game loop
         function gameLoop() {
-            updatePhysics();
+            update();
             draw();
-            if (gameRunning) {
-                requestAnimationFrame(gameLoop);
-            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start game
+        function startGame() {
+            startBtn.style.display = 'none';
+            gameRunning = true;
+            startTime = Date.now();
+            
+            // Reset points to corners
+            points = [
+                { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 },
+                { x: canvas.width * 0.7, y: canvas.height * 0.3, vx: 0, vy: 0 },
+                { x: canvas.width * 0.3, y: canvas.height * 0.7, vx: 0, vy: 0 },
+                { x: canvas.width * 0.7, y: canvas.height * 0.7, vx: 0, vy: 0 }
+            ];
+            
+            randomizeAllPoints();
+            
+            window.addEventListener('deviceorientation', handleTilt);
         }
 
         startBtn.addEventListener('click', startGame);
-        restartBtn.addEventListener('click', startGame);
+        gameLoop();
 
         window.addEventListener('resize', () => {
             canvas.width = window.innerWidth;
