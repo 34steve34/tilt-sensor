@@ -83,6 +83,7 @@ let gameRunning = false;
 let startTime = 0;
 let activeQuadrant = null;
 let gracePeriod = 0;
+let justStarted = false; // Blocks the first canvas touch after START
 
 let baseBeta = 0;
 let baseGamma = 0;
@@ -93,10 +94,10 @@ let points = [];
 
 function resetPoints() {
     points = [
-        { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 },  // TL
-        { x: canvas.width * 0.7, y: canvas.height * 0.3, vx: 0, vy: 0 },  // TR
-        { x: canvas.width * 0.3, y: canvas.height * 0.7, vx: 0, vy: 0 },  // BL
-        { x: canvas.width * 0.7, y: canvas.height * 0.7, vx: 0, vy: 0 }   // BR
+        { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 },
+        { x: canvas.width * 0.7, y: canvas.height * 0.3, vx: 0, vy: 0 },
+        { x: canvas.width * 0.3, y: canvas.height * 0.7, vx: 0, vy: 0 },
+        { x: canvas.width * 0.7, y: canvas.height * 0.7, vx: 0, vy: 0 }
     ];
 }
 
@@ -111,18 +112,19 @@ function randomizeAll() {
     for (let i = 0; i < points.length; i++) randomizePoint(i);
 }
 
-// Orientation handling
+// Orientation handling - FIXED: check for null explicitly, not falsy
 function handleOrientation(e) {
-    if (!e.beta && !e.gamma) return;
-    tiltX = (e.gamma || 0) - baseGamma;
-    tiltY = (e.beta  || 0) - baseBeta;
+    if (e.beta === null || e.gamma === null) return;
+    tiltX = e.gamma - baseGamma;
+    tiltY = e.beta  - baseBeta;
     tiltX = Math.max(-35, Math.min(35, tiltX));
     tiltY = Math.max(-35, Math.min(35, tiltY));
 }
 
-// Touch controls
+// Touch controls - FIXED: skip if justStarted flag is set
 canvas.addEventListener("touchstart", e => {
     if (!gameRunning) return;
+    if (justStarted) return; // Block the bubble-through touch from START button
     e.preventDefault();
     const t = e.touches[0];
     const r = canvas.getBoundingClientRect();
@@ -156,17 +158,11 @@ function linesIntersect(p1, p2, p3, p4) {
 }
 
 function squareValid() {
-    const edges = [[0,1],[1,3],[3,2],[2,0]];
-    for (let i = 0; i < edges.length; i++) {
-        for (let j = i + 2; j < edges.length; j++) {
-            if (i === 0 && j === 2) continue;
-            const [a,b] = edges[i];
-            const [c,d] = edges[j];
-            if (linesIntersect(points[a], points[b], points[c], points[d])) {
-                return false;
-            }
-        }
-    }
+    // Only check opposite edges: top vs bottom, left vs right
+    // top=0-1, right=1-3, bottom=3-2, left=2-0
+    // Opposite pairs: [0,1] vs [3,2] and [1,3] vs [2,0]
+    if (linesIntersect(points[0], points[1], points[3], points[2])) return false;
+    if (linesIntersect(points[1], points[3], points[2], points[0])) return false;
     return true;
 }
 
@@ -238,11 +234,11 @@ function draw() {
     if (activeQuadrant !== null) {
         const qx = activeQuadrant % 2 === 0 ? 0 : canvas.width/2;
         const qy = activeQuadrant < 2 ? 0 : canvas.height/2;
-        ctx.fillStyle = COLORS[activeQuadrant].quad.replace("0.10)", "0.25)");
+        ctx.fillStyle = COLORS[activeQuadrant].quad.replace("0.10)", "0.28)");
         ctx.fillRect(qx, qy, canvas.width/2, canvas.height/2);
     }
 
-    // Draw the square edges - each half colored by its endpoint
+    // Draw edges - each half colored by its endpoint
     const edges = [
         [0, 1],  // top
         [1, 3],  // right
@@ -264,7 +260,6 @@ function draw() {
 
         // Second half - color of point b
         ctx.strokeStyle = COLORS[b].point;
-        ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.moveTo(midX, midY);
         ctx.lineTo(points[b].x, points[b].y);
@@ -273,7 +268,6 @@ function draw() {
 
     // Draw points with glow
     points.forEach((p, i) => {
-        // Glow
         ctx.shadowColor = COLORS[i].point;
         ctx.shadowBlur = i === activeQuadrant ? 20 : 10;
 
@@ -301,12 +295,17 @@ loop();
 // Start game handler
 function startGame(e) {
     if (e) e.preventDefault();
+    if (e) e.stopPropagation(); // FIXED: stop touch from bubbling to canvas
     if (gameRunning) return;
 
     startBtn.style.display = "none";
     gameRunning = true;
     gracePeriod = 90; // ~1.5s at 60fps
-    startTime = Date.now();  // FIXED: was Date.new()
+    startTime = Date.now();
+
+    // Block the next canvas touchstart (bubble-through from this tap)
+    justStarted = true;
+    setTimeout(() => { justStarted = false; }, 200);
 
     resetPoints();
     randomizeAll();
