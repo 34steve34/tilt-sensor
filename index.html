@@ -72,10 +72,10 @@ window.addEventListener("resize", resize);
 // Colors for each quadrant/point
 // 0=TL, 1=TR, 2=BL, 3=BR
 const COLORS = [
-    { point: "#FF5722",  quad: "rgba(255, 87, 34,  0.10)" },  // TL - Orange
-    { point: "#FFD700",  quad: "rgba(255, 215, 0,  0.10)" },  // TR - Yellow
-    { point: "#00BCD4",  quad: "rgba(0,   188, 212, 0.10)" }, // BL - Cyan
-    { point: "#E91E63",  quad: "rgba(233, 30, 99,  0.10)" }   // BR - Pink
+    { point: "#FF3333",  quad: "rgba(255, 51,  51,  0.10)" },  // TL - Red
+    { point: "#FFD700",  quad: "rgba(255, 215, 0,   0.10)" },  // TR - Yellow
+    { point: "#00E676",  quad: "rgba(0,   230, 118, 0.10)" },  // BL - Green
+    { point: "#00BFFF",  quad: "rgba(0,   191, 255, 0.10)" }   // BR - Blue
 ];
 
 // Game state
@@ -238,12 +238,11 @@ function draw() {
     if (activeQuadrant !== null) {
         const qx = activeQuadrant % 2 === 0 ? 0 : canvas.width/2;
         const qy = activeQuadrant < 2 ? 0 : canvas.height/2;
-        ctx.fillStyle = COLORS[activeQuadrant].quad
-            .replace("0.10)", "0.25)");  // Brighten active
+        ctx.fillStyle = COLORS[activeQuadrant].quad.replace("0.10)", "0.25)");
         ctx.fillRect(qx, qy, canvas.width/2, canvas.height/2);
     }
 
-    // Draw the square edges, each edge colored by average of its two endpoints
+    // Draw the square edges - each half colored by its endpoint
     const edges = [
         [0, 1],  // top
         [1, 3],  // right
@@ -252,21 +251,23 @@ function draw() {
     ];
 
     edges.forEach(([a, b]) => {
+        const midX = (points[a].x + points[b].x) / 2;
+        const midY = (points[a].y + points[b].y) / 2;
+
+        // First half - color of point a
         ctx.strokeStyle = COLORS[a].point;
         ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.moveTo(points[a].x, points[a].y);
-        ctx.lineTo(points[b].x, points[b].y);
+        ctx.lineTo(midX, midY);
         ctx.stroke();
 
+        // Second half - color of point b
         ctx.strokeStyle = COLORS[b].point;
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(points[b].x, points[b].y);
-        ctx.lineTo(
-            (points[a].x + points[b].x) / 2,
-            (points[a].y + points[b].y) / 2
-        );
+        ctx.moveTo(midX, midY);
+        ctx.lineTo(points[b].x, points[b].y);
         ctx.stroke();
     });
 
@@ -305,7 +306,7 @@ function startGame(e) {
     startBtn.style.display = "none";
     gameRunning = true;
     gracePeriod = 90; // ~1.5s at 60fps
-    startTime = Date.new();
+    startTime = Date.now();  // FIXED: was Date.new()
 
     resetPoints();
     randomizeAll();
