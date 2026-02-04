@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v10</title>
+<title>Tilt Test v11</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; }
 #gameCanvas { display: block; background: radial-gradient(circle, #0a1628 0%, #050b14 100%); }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    padding: 20px 60px; font-size: 24px; background: #FF9800; color: white;
+    padding: 20px 60px; font-size: 24px; background: #E91E63; color: white;
     border: none; border-radius: 12px; cursor: pointer; z-index: 10;
 }
 #info { position: absolute; top: 16px; left: 16px; font-size: 14px; color: #4fc3f7; z-index: 5; pointer-events: none; }
@@ -20,15 +20,15 @@ body { background: #050b14; overflow: hidden; touch-action: none; font-family: m
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="info">
-    Version 10 (Infinite Sky)<br>
+    Version 11 (Delta Wing)<br>
     L: <span id="lIn">-</span> | R: <span id="rIn">-</span><br>
     <span id="status">Hold Landscape & Calibrate</span>
 </div>
-<div id="version">v10.0</div>
-<button id="startBtn">START MISSION</button>
+<div id="version">v11.0</div>
+<button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
-const VERSION = 10;
+const VERSION = 11;
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
@@ -39,15 +39,18 @@ let baseGX = 0, baseGY = 0;
 let touchL = false, touchR = false;
 
 const CONFIG = {
-    friction: 0.94,
-    sensX: 0.28,    // 80% of v9 (0.35 * 0.8)
-    sensY: 0.14,    // 40% of v9 (0.35 * 0.4)
+    friction: 0.93,
+    sensX: 0.28,
+    sensY: 0.14,
     deadzone: 0.8,
-    linkLength: 140
+    wingWidth: 120,
+    noseLength: 50
 };
 
+// Three points of the triangle
 let ballL = { x: 0, y: 0, vx: 0, vy: 0 };
 let ballR = { x: 0, y: 0, vx: 0, vy: 0 };
+let nose = { x: 0, y: 0 }; // Positioned relative to the mid-point
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -63,8 +66,6 @@ function updateTouches(e) {
         if (e.touches[i].clientX < window.innerWidth / 2) touchL = true;
         else touchR = true;
     }
-    document.getElementById('lIn').textContent = touchL ? "HELD" : "OFF";
-    document.getElementById('rIn').textContent = touchR ? "HELD" : "OFF";
 }
 window.addEventListener("touchstart", updateTouches);
 window.addEventListener("touchend", updateTouches);
@@ -72,8 +73,7 @@ window.addEventListener("touchend", updateTouches);
 function handleMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc) return;
-    // Forcing Landscape logic: assumes phone is held wide
-    // Swap axes for landscape: acc.y becomes screen X, acc.x becomes screen Y
+    // Map for landscape (Phone held wide)
     tiltX = acc.y - baseGY; 
     tiltY = acc.x - baseGX;
 }
@@ -93,7 +93,6 @@ function update() {
 
     const controlAll = !touchL && !touchR;
     
-    // Apply Asymmetric Forces
     if (controlAll || touchL) {
         ballL.vx += forceX * CONFIG.sensX;
         ballL.vy += forceY * CONFIG.sensY;
@@ -103,60 +102,67 @@ function update() {
         ballR.vy += forceY * CONFIG.sensY;
     }
 
+    // Apply movement
     ballL.x += ballL.vx; ballL.y += ballL.vy;
     ballR.x += ballR.vx; ballR.y += ballR.vy;
 
+    // Friction
     ballL.vx *= CONFIG.friction; ballL.vy *= CONFIG.friction;
     ballR.vx *= CONFIG.friction; ballR.vy *= CONFIG.friction;
 
-    // Constraint Logic
+    // Rigid Constraint (Wing Width)
     const dx = ballR.x - ballL.x;
     const dy = ballR.y - ballL.y;
     const dist = Math.sqrt(dx*dx + dy*dy);
-    // Only constrain if they haven't wrapped separately
-    if (dist < CONFIG.linkLength * 1.5) {
-        const diff = (CONFIG.linkLength - dist) / dist;
+
+    // Only constrain if they haven't wrapped (dist check)
+    if (dist < canvas.width / 2 && dist < canvas.height / 2) {
+        const diff = (CONFIG.wingWidth - dist) / dist;
         ballL.x -= dx * diff * 0.5; ballL.y -= dy * diff * 0.5;
         ballR.x += dx * diff * 0.5; ballR.y += dy * diff * 0.5;
     }
 
     wrap(ballL);
     wrap(ballR);
+
+    // Update Nose Position (Central and Forward)
+    const midX = (ballL.x + ballR.x) / 2;
+    const midY = (ballL.y + ballR.y) / 2;
+    const angle = Math.atan2(ballR.y - ballL.y, ballR.x - ballL.x) - Math.PI/2;
+    
+    nose.x = midX + Math.cos(angle) * CONFIG.noseLength;
+    nose.y = midY + Math.sin(angle) * CONFIG.noseLength;
 }
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
-    // Draw Subtle Grid
-    ctx.strokeStyle = "rgba(79, 195, 247, 0.05)";
-    for(let i=0; i<canvas.width; i+=100) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,canvas.height); ctx.stroke(); }
-    for(let j=0; j<canvas.height; j+=100) { ctx.beginPath(); ctx.moveTo(0,j); ctx.lineTo(canvas.width,j); ctx.stroke(); }
+    // Check if balls are too far apart (wrapping) to draw the wing
+    const dx = Math.abs(ballL.x - ballR.x);
+    const dy = Math.abs(ballL.y - ballR.y);
+    const nLx = Math.abs(ballL.x - nose.x);
+    const nLy = Math.abs(ballL.y - nose.y);
 
-    // Draw Wing Line
-    ctx.strokeStyle = "#4fc3f7";
-    ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(ballL.x, ballL.y); ctx.lineTo(ballR.x, ballR.y); ctx.stroke();
+    if (dx < canvas.width/2 && dy < canvas.height/2 && nLx < canvas.width/2) {
+        // Draw Triangle Body
+        ctx.fillStyle = "rgba(79, 195, 247, 0.2)";
+        ctx.strokeStyle = "#4fc3f7";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(ballL.x, ballL.y);
+        ctx.lineTo(ballR.x, ballR.y);
+        ctx.lineTo(nose.x, nose.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+    }
 
-    // Draw Nose (Triangle in center)
-    const midX = (ballL.x + ballR.x) / 2;
-    const midY = (ballL.y + ballR.y) / 2;
-    const angle = Math.atan2(ballR.y - ballL.y, ballR.x - ballL.x) - Math.PI/2;
-    
-    ctx.save();
-    ctx.translate(midX, midY);
-    ctx.rotate(angle);
-    ctx.fillStyle = "#FFF";
-    ctx.beginPath();
-    ctx.moveTo(0, -20); ctx.lineTo(-10, 10); ctx.lineTo(10, 10);
-    ctx.closePath(); ctx.fill();
-    ctx.restore();
-
-    // Draw Endpoints
-    ctx.fillStyle = touchL ? "#FF9800" : "#4fc3f7";
-    ctx.beginPath(); ctx.arc(ballL.x, ballL.y, 10, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = touchR ? "#FF9800" : "#4fc3f7";
-    ctx.beginPath(); ctx.arc(ballR.x, ballR.y, 10, 0, Math.PI*2); ctx.fill();
+    // Draw Engine Dots
+    ctx.fillStyle = touchL ? "#E91E63" : "#4fc3f7";
+    ctx.beginPath(); ctx.arc(ballL.x, ballL.y, 8, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = touchR ? "#E91E63" : "#4fc3f7";
+    ctx.beginPath(); ctx.arc(ballR.x, ballR.y, 8, 0, Math.PI*2); ctx.fill();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
@@ -167,18 +173,17 @@ async function startGame() {
         const res = await DeviceMotionEvent.requestPermission();
         if (res !== 'granted') return;
     }
-    document.getElementById('status').textContent = "Wait for steady...";
     setTimeout(() => {
         window.addEventListener("devicemotion", (e) => {
             baseGX = e.accelerationIncludingGravity.x;
             baseGY = e.accelerationIncludingGravity.y;
             startBtn.style.display = "none";
             gameRunning = true;
-            ballL = { x: canvas.width/2 - 70, y: canvas.height/2, vx: 0, vy: 0 };
-            ballR = { x: canvas.width/2 + 70, y: canvas.height/2, vx: 0, vy: 0 };
+            ballL = { x: canvas.width/2 - 60, y: canvas.height/2 + 30, vx: 0, vy: 0 };
+            ballR = { x: canvas.width/2 + 60, y: canvas.height/2 + 30, vx: 0, vy: 0 };
             window.addEventListener("devicemotion", handleMotion);
         }, { once: true });
-    }, 800);
+    }, 500);
 }
 startBtn.addEventListener("click", startGame);
 </script>
