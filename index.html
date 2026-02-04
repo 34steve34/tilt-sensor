@@ -3,25 +3,23 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v20</title>
+<title>Tilt Test v21.1</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; color: #4fc3f7; }
+body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; color: #00E676; }
 #gameCanvas { display: block; background: radial-gradient(circle, #0a1628 0%, #050b14 100%); }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     padding: 20px 40px; font-size: 20px; background: #00E676; color: #050b14;
     border: none; border-radius: 12px; cursor: pointer; z-index: 100; font-weight: bold;
 }
-#info { position: absolute; top: 16px; left: 16px; font-size: 12px; pointer-events: none; }
 #version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.3); }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="info">Hold phone at flying angle...<br>Wait for "READY" then press START</div>
-<div id="version">v20.0 (Axis & Wake Fix)</div>
-<button id="startBtn">WAKING SENSORS...</button>
+<div id="version">v21.1 (Parallel Fix)</div>
+<button id="startBtn">START ENGINES</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -32,19 +30,20 @@ let gameRunning = false;
 let touchL = false, touchR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
-let maxRange = 2.5; // Represents ~30 degrees
+let maxRange = 3.0; // Solid default for ~35 degrees of throw
 
 const CONFIG = {
-    rotTorque: 0.002,
-    rotFriction: 0.97,
-    driftSens: 0.14,
-    driftFriction: 0.95,
-    deadzone: 0.5,
+    rotTorque: 0.0016,    
+    rotFriction: 0.97,    
+    driftSens: 0.088,     
+    driftFriction: 0.95,  
+    deadzone: 0.4,
     wingWidth: 100,
     noseLength: 50
 };
 
 let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI / 2, vAngle: 0 };
+let lastAcc = null;
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -64,20 +63,18 @@ function updateTouches(e) {
 window.addEventListener("touchstart", updateTouches);
 window.addEventListener("touchend", updateTouches);
 
-function handleMotion(e) {
-    const acc = e.accelerationIncludingGravity;
-    if (!acc) return;
+window.addEventListener("devicemotion", (e) => {
+    lastAcc = e.accelerationIncludingGravity;
+    if (!gameRunning || !lastAcc) return;
     
-    // LANDSCAPE CORRECTION:
-    // Tilting AWAY/TOWARD moves ship UP/DOWN (formerly acc.y)
-    // Tilting LEFT/RIGHT moves ship LEFT/RIGHT (formerly acc.x)
-    // Swapping and inverting based on your test feedback:
-    let rawY = -acc.x; // Inverted X because Away = Left
-    let rawX = acc.y; 
+    // Y is forward/back, X is left/right
+    let rawY = lastAcc.x; 
+    let rawX = lastAcc.y; 
 
+    // Calculate delta and clamp to maxRange
     tiltY = Math.max(-maxRange, Math.min(maxRange, rawY - baseGY));
     tiltX = Math.max(-maxRange, Math.min(maxRange, rawX - baseGX));
-}
+});
 
 function update() {
     if (!gameRunning) return;
@@ -87,8 +84,8 @@ function update() {
     ship.angle += ship.vAngle;
     ship.vAngle *= CONFIG.rotFriction;
 
-    let fX = Math.abs(tiltX) > CONFIG.deadzone ? tiltX : 0;
-    let fY = Math.abs(tiltY) > CONFIG.deadzone ? tiltY : 0;
+    let fX = (Math.abs(tiltX) > CONFIG.deadzone) ? tiltX : 0;
+    let fY = (Math.abs(tiltY) > CONFIG.deadzone) ? tiltY : 0;
 
     ship.vx += fX * CONFIG.driftSens;
     ship.vy += fY * CONFIG.driftSens;
@@ -118,8 +115,7 @@ function draw() {
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(lX, lY); ctx.lineTo(rX, rY); ctx.lineTo(nX, nY);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
+    ctx.closePath(); ctx.fill(); ctx.stroke();
 
     if (touchL) drawGlow(lX, lY);
     if (touchR) drawGlow(rX, rY);
@@ -135,58 +131,34 @@ function drawGlow(x, y) {
 function loop() { update(); draw(); requestAnimationFrame(loop); }
 loop();
 
-async function initSensors() {
+async function start() {
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
         const res = await DeviceMotionEvent.requestPermission();
-        if (res !== 'granted') {
-            startBtn.innerText = "PERMISSION DENIED";
-            return;
-        }
+        if (res !== 'granted') return;
     }
 
-    // Force a wake-up call to the sensors
-    window.addEventListener("devicemotion", (e) => {
-        if (e.accelerationIncludingGravity.x !== null) {
-            startBtn.innerText = "START ENGINES";
-            startBtn.disabled = false;
+    if (lastAcc) {
+        // Lock current position
+        baseGY = lastAcc.x; 
+        baseGX = lastAcc.y;
+
+        // ONLY warn if they are holding it on its razor edge (vertical)
+        // Because that's where the sensors flip and get weird.
+        if (Math.abs(baseGY) > 9.0) {
+            alert("Hold the phone naturally (flat or angled) to start!");
+            return;
         }
-        handleMotion(e);
-    });
 
-    startBtn.addEventListener("click", () => {
-        // Capture base at exact moment of click
-        // Use the same coordinate mapping as handleMotion
-        const acc = lastAcc; // We'll grab this from the event
-        if (acc) {
-            baseGY = -acc.x;
-            baseGX = acc.y;
-
-            // Symmetry Check
-            const dUp = 9.8 - Math.abs(baseGY);
-            const dLow = Math.abs(baseGY);
-            const dSide = 9.8 - Math.abs(baseGX);
-            
-            maxRange = Math.min(dUp, dLow, dSide, 3.5);
-
-            if (maxRange < 2.0) {
-                alert("Angle too steep for flight! Tilt phone toward you.");
-                return;
-            }
-
-            gameRunning = true;
-            startBtn.style.display = "none";
-            ship.x = canvas.width / 2;
-            ship.y = canvas.height / 2;
-            ship.vx = 0; ship.vy = 0;
-        }
-    });
+        gameRunning = true;
+        startBtn.style.display = "none";
+        ship.x = canvas.width / 2;
+        ship.y = canvas.height / 2;
+        ship.vx = 0; ship.vy = 0;
+    } else {
+        startBtn.innerText = "WAITING FOR SENSORS...";
+    }
 }
-
-// Helper to bridge the click and the last motion event
-let lastAcc = null;
-window.addEventListener("devicemotion", (e) => { lastAcc = e.accelerationIncludingGravity; });
-
-startBtn.addEventListener("click", initSensors, {once: true});
+startBtn.addEventListener("click", start);
 </script>
 </body>
 </html>
