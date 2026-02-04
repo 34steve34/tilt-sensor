@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v13</title>
+<title>Tilt Test v14</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; }
@@ -20,11 +20,11 @@ body { background: #050b14; overflow: hidden; touch-action: none; font-family: m
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="info">
-    Version 13 (Rotational Control)<br>
-    L: CCW | R: CW<br>
-    <span id="status">Tilt to drift, Tap to rotate</span>
+    Version 14 (Inertia & Friction)<br>
+    L: CCW Torque | R: CW Torque<br>
+    <span id="status">Physics: Asteroids-style rotation</span>
 </div>
-<div id="version">v13.0</div>
+<div id="version">v14.0</div>
 <button id="startBtn">INITIALIZE PILOT</button>
 
 <script>
@@ -38,10 +38,14 @@ let baseGX = 0, baseGY = 0;
 let touchL = false, touchR = false;
 
 const CONFIG = {
-    friction: 0.92,      // Increased friction (slower glide)
-    sensX: 0.22,        // 20% reduced from v12
-    sensY: 0.12,        // 20% reduced from v12
-    rotationSpeed: 0.06, // Radians per frame
+    // Linear Movement (Drifting)
+    driftFriction: 0.95,  // Slows the ship down over time
+    driftSens: 0.18,      // How much tilt affects movement
+    
+    // Rotational Physics (The "Asteroids" feel)
+    rotTorque: 0.004,     // How much "push" the rotation gets (Reduced 50%)
+    rotFriction: 0.88,    // High friction so it doesn't spin forever
+    
     deadzone: 0.8,
     wingWidth: 120,
     noseLength: 55
@@ -50,8 +54,9 @@ const CONFIG = {
 // Ship State
 let ship = {
     x: 0, y: 0,
-    vx: 0, vy: 0,
-    angle: -Math.PI / 2 // Facing up
+    vx: 0, vy: 0,        // Linear Velocity
+    angle: -Math.PI / 2, // Current Orientation
+    vAngle: 0            // Rotational Velocity (Inertia)
 };
 
 function resize() {
@@ -82,22 +87,26 @@ function handleMotion(e) {
 function update() {
     if (!gameRunning) return;
 
-    // 1. Rotation Logic (Simple CCW / CW)
-    if (touchL) ship.angle -= CONFIG.rotationSpeed;
-    if (touchR) ship.angle += CONFIG.rotationSpeed;
+    // 1. Rotational Physics
+    if (touchL) ship.vAngle -= CONFIG.rotTorque;
+    if (touchR) ship.vAngle += CONFIG.rotTorque;
 
-    // 2. Translation Logic (Tilt moves the whole craft)
+    ship.angle += ship.vAngle;       // Apply rotational velocity
+    ship.vAngle *= CONFIG.rotFriction; // Apply rotational friction
+
+    // 2. Linear Movement (Tilt)
     let forceX = Math.abs(tiltX) > CONFIG.deadzone ? tiltX : 0;
     let forceY = Math.abs(tiltY) > CONFIG.deadzone ? tiltY : 0;
 
-    ship.vx += forceX * CONFIG.sensX;
-    ship.vy += forceY * CONFIG.sensY;
+    ship.vx += forceX * CONFIG.driftSens;
+    ship.vy += forceY * CONFIG.driftSens;
 
-    // 3. Movement & Friction
     ship.x += ship.vx;
     ship.y += ship.vy;
-    ship.vx *= CONFIG.friction;
-    ship.vy *= CONFIG.friction;
+
+    // 3. Movement Friction (The "Glider" feel)
+    ship.vx *= CONFIG.driftFriction;
+    ship.vy *= CONFIG.driftFriction;
 
     // 4. Group Wrap
     if (ship.x < 0) ship.x = canvas.width;
@@ -111,8 +120,7 @@ function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
-    // Calculate Wing Tips based on Center (ship.x, ship.y) and Angle
-    // Wing tips are perpendicular to the nose angle
+    // Visual calculations based on current angle
     const halfWidth = CONFIG.wingWidth / 2;
     const lX = ship.x + Math.cos(ship.angle - Math.PI/2) * halfWidth;
     const lY = ship.y + Math.sin(ship.angle - Math.PI/2) * halfWidth;
@@ -121,8 +129,15 @@ function draw() {
     const nX = ship.x + Math.cos(ship.angle) * CONFIG.noseLength;
     const nY = ship.y + Math.sin(ship.angle) * CONFIG.noseLength;
 
-    // Draw Triangle Body
-    ctx.fillStyle = "rgba(0, 230, 118, 0.15)";
+    // Ship Shadow (offset slightly for depth)
+    ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+    ctx.beginPath();
+    ctx.moveTo(lX+4, lY+4); ctx.lineTo(rX+4, rY+4); ctx.lineTo(nX+4, nY+4);
+    ctx.closePath();
+    ctx.fill();
+
+    // Ship Body
+    ctx.fillStyle = "rgba(0, 230, 118, 0.2)";
     ctx.strokeStyle = "#00E676";
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -133,11 +148,20 @@ function draw() {
     ctx.fill();
     ctx.stroke();
 
-    // Draw Engine Indicators
-    ctx.fillStyle = touchL ? "#FFF" : "#00E676";
-    ctx.beginPath(); ctx.arc(lX, lY, 8, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = touchR ? "#FFF" : "#00E676";
-    ctx.beginPath(); ctx.arc(rX, rY, 8, 0, Math.PI*2); ctx.fill();
+    // Thrust Indicators (visualize the rotation force)
+    if (touchL) {
+        ctx.fillStyle = "#FFF";
+        ctx.beginPath(); ctx.arc(rX, rY, 12, 0, Math.PI*2); ctx.fill();
+    }
+    if (touchR) {
+        ctx.fillStyle = "#FFF";
+        ctx.beginPath(); ctx.arc(lX, lY, 12, 0, Math.PI*2); ctx.fill();
+    }
+
+    // Engine Core Dots
+    ctx.fillStyle = "#00E676";
+    ctx.beginPath(); ctx.arc(lX, lY, 6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(rX, rY, 6, 0, Math.PI*2); ctx.fill();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
