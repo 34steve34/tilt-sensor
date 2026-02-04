@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v25.1</title>
+<title>Trench Run v26</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #000; overflow: hidden; touch-action: none; font-family: monospace; color: #00E676; }
@@ -18,7 +18,7 @@ body { background: #000; overflow: hidden; touch-action: none; font-family: mono
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="ui">DIST: <span id="dist">0</span>m | LVL: <span id="lvl">1</span></div>
+<div id="ui">DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
 <button id="startBtn">START ENGINES</button>
 
 <script>
@@ -30,16 +30,17 @@ let gameRunning = false;
 let touchL = false, touchR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
-let distance = 0, level = 1, frameCount = 0;
+let distance = 0, frameCount = 0;
+let speedMultiplier = 0.1; // Start at 10% speed
 
 const CONFIG = {
     rotTorque: 0.0016, 
     driftSens: 0.12, 
     driftFriction: 0.92, 
     rotFriction: 0.97,
-    trenchSpeed: 0.012, // 30% reduction from 0.018
-    curveDrift: 150, 
-    gateFrequency: 16,  // Slower spawn rate
+    trenchSpeedBase: 0.012, 
+    curveDrift: 160, 
+    gateFrequency: 16,
     baseW: () => canvas.width * 0.45, 
     baseH: () => canvas.height * 0.45,
     maxZ: 5.0
@@ -47,7 +48,7 @@ const CONFIG = {
 
 let ship = { 
     x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0,
-    w: 80, h: 10 // WIDER and SHORTER
+    w: 90, h: 8 // Even wider and shorter
 };
 
 let gates = []; 
@@ -80,7 +81,12 @@ function spawnGate() {
 
 function update() {
     if (!gameRunning) return;
-    distance += CONFIG.trenchSpeed * 30;
+    
+    // Ramp up speed over 10 seconds (600 frames at 60fps)
+    if (speedMultiplier < 1.0) speedMultiplier += 0.0015; 
+    
+    let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
+    distance += currentSpeed * 30;
     frameCount++;
 
     pathX = Math.sin(frameCount * 0.015) * CONFIG.curveDrift;
@@ -88,6 +94,7 @@ function update() {
 
     if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
 
+    // Ship Physics
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
@@ -99,11 +106,15 @@ function update() {
     ship.y = Math.max(20, Math.min(canvas.height - 20, ship.y));
 
     for (let i = gates.length - 1; i >= 0; i--) {
-        gates[i].z -= CONFIG.trenchSpeed;
+        gates[i].z -= currentSpeed;
         
-        if (gates[i].z < 0.2 && gates[i].z > 0) {
-            const cX = canvas.width/2 + gates[i].cx;
-            const cY = canvas.height/2 + gates[i].cy;
+        // COLLISION: If nearest gate is passing the ship
+        if (i === 0 && gates[i].z < 0.2 && gates[i].z > 0) {
+            const dPct = 1 - (gates[i].z / CONFIG.maxZ);
+            const cX = canvas.width/2 + gates[i].cx * dPct;
+            const cY = canvas.height/2 + gates[i].cy * dPct;
+            
+            // Death happens if ship exits the box bounds
             if (Math.abs(ship.x - cX) > gates[i].w/2 || Math.abs(ship.y - cY) > gates[i].h/2) {
                 gameOver();
             }
@@ -111,6 +122,7 @@ function update() {
         if (gates[i].z <= 0) gates.splice(i, 1);
     }
     document.getElementById("dist").innerText = Math.floor(distance);
+    document.getElementById("thrust").innerText = Math.floor(speedMultiplier * 100);
 }
 
 function gameOver() {
@@ -133,13 +145,20 @@ function draw() {
         let sW = g.w * scale; let sH = g.h * scale;
         let sX = mx + g.cx * dPct; let sY = my + g.cy * dPct;
 
-        // ONLY highlight the NEAREST gate (the one at index 0)
         let isNearest = (i === 0);
-        let col = (isNearest && g.z < 1.2) ? `255, 255, 255` : `0, 230, 118`;
+        let col = (isNearest && g.z < 1.5) ? `255, 255, 255` : `0, 230, 118`;
         
         ctx.strokeStyle = `rgba(${col}, ${dPct})`;
-        ctx.lineWidth = (isNearest && g.z < 1.2) ? 5 : 2;
+        ctx.lineWidth = (isNearest && g.z < 1.5) ? 4 : 2;
         ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
+
+        // Horizon Crosshair for the nearest gate
+        if (isNearest && g.z < 1.5) {
+            ctx.beginPath();
+            ctx.moveTo(sX - 10, sY); ctx.lineTo(sX + 10, sY);
+            ctx.moveTo(sX, sY - 10); ctx.lineTo(sX, sY + 10);
+            ctx.stroke();
+        }
 
         if (i < gates.length - 1) {
             let n = gates[i+1];
@@ -148,8 +167,7 @@ function draw() {
             let nX = mx + n.cx * nPct, nY = my + n.cy * nPct;
             let nW = n.w * nScale, nH = n.h * nScale;
 
-            // Orange lines are fainted in distance, brighter near active gate
-            ctx.strokeStyle = (isNearest) ? `rgba(255, 140, 0, 0.5)` : `rgba(255, 140, 0, 0.1)`;
+            ctx.strokeStyle = (isNearest) ? `rgba(255, 140, 0, 0.4)` : `rgba(255, 140, 0, 0.1)`;
             ctx.beginPath();
             ctx.moveTo(sX-sW/2, sY-sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
             ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY-nH/2);
@@ -159,18 +177,17 @@ function draw() {
         }
     }
 
-    // Wide Plane Shape
+    // Wide Plane
     ctx.save();
     ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(20, 0); // Nose
-    ctx.lineTo(-10, -ship.w/2); // Left wing
-    ctx.lineTo(-5, 0); // Tail
-    ctx.lineTo(-10, ship.w/2); // Right wing
+    ctx.moveTo(20, 0); 
+    ctx.lineTo(-10, -ship.w/2); ctx.lineTo(-5, 0); ctx.lineTo(-10, ship.w/2);
     ctx.closePath(); ctx.stroke();
-    // Cockpit detail
-    ctx.strokeRect(-2, -3, 6, 6);
+    // Wing detail
+    ctx.strokeRect(-8, -ship.w/2 + 5, 4, 10);
+    ctx.strokeRect(-8, ship.w/2 - 15, 4, 10);
     ctx.restore();
 }
 
