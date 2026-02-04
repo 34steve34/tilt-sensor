@@ -3,51 +3,53 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v8</title>
+<title>Tilt Test v9</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #1a1a1a; overflow: hidden; touch-action: none; font-family: monospace; }
 #gameCanvas { display: block; background: #0a0a0a; }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    padding: 20px 60px; font-size: 24px; background: #009688; color: white;
+    padding: 20px 60px; font-size: 24px; background: #2196F3; color: white;
     border: none; border-radius: 12px; cursor: pointer; z-index: 10;
 }
-#info { position: absolute; top: 16px; left: 16px; font-size: 16px; color: white; z-index: 5; line-height: 1.4; }
-#version { position: absolute; bottom: 16px; right: 16px; font-size: 14px; color: rgba(255,255,255,0.5); }
+#info { position: absolute; top: 16px; left: 16px; font-size: 14px; color: white; z-index: 5; pointer-events: none; }
+#version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.3); }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="info">
-    Version 8 (High Friction)<br>
-    RelX: <span id="tiltX">0</span><br>
-    RelY: <span id="tiltY">0</span><br>
-    <span id="status" style="color: #00E676;">Press START and hold steady...</span>
+    Version 9 (Glider Prototype)<br>
+    L-Input: <span id="lIn">Off</span> | R-Input: <span id="rIn">Off</span><br>
+    <span id="status">Tap sides to steer</span>
 </div>
-<div id="version">v8.0</div>
-<button id="startBtn">START</button>
+<div id="version">v9.0</div>
+<button id="startBtn">START GLIDER</button>
 
 <script>
-const VERSION = 8;
+const VERSION = 9;
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 
 let gameRunning = false;
-let tiltX = 0;
-let tiltY = 0;
-let baseGX = 0, baseGY = 0, baseGZ = 0;
+let tiltX = 0, tiltY = 0;
+let baseGX = 0, baseGY = 0;
+
+// Input State
+let touchL = false, touchR = false;
 
 // Physics Config
-let dot = {
-    x: 0, y: 0,
-    vx: 0, vy: 0,
-    radius: 20,
-    friction: 0.85,    // High friction (v7 was 0.93)
-    sensitivity: 0.3, // Lower sensitivity (v7 was 0.6)
-    deadzone: 1.0     // Ignore small tilts (v7 was 0.4)
+const CONFIG = {
+    friction: 0.92,
+    sensitivity: 0.35,
+    deadzone: 0.8,
+    linkLength: 150
 };
+
+let ballL = { x: 0, y: 0, vx: 0, vy: 0 };
+let ballR = { x: 0, y: 0, vx: 0, vy: 0 };
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -56,54 +58,76 @@ function resize() {
 resize();
 window.addEventListener("resize", resize);
 
+// Input Handling
+function updateTouches(e) {
+    if (!gameRunning) return;
+    touchL = false;
+    touchR = false;
+    for (let i = 0; i < e.touches.length; i++) {
+        if (e.touches[i].clientX < window.innerWidth / 2) touchL = true;
+        else touchR = true;
+    }
+    document.getElementById('lIn').textContent = touchL ? "Active" : "Off";
+    document.getElementById('rIn').textContent = touchR ? "Active" : "Off";
+}
+window.addEventListener("touchstart", updateTouches);
+window.addEventListener("touchend", updateTouches);
+window.addEventListener("touchmove", (e) => e.preventDefault(), {passive: false});
+
 function handleMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc) return;
-
-    // Relative to baseline
     let dx = acc.x - baseGX;
     let dy = acc.y - baseGY;
-
     const rot = window.orientation || 0;
-    if (rot === 0) {
-        tiltX = -dx;
-        tiltY = dy;
-    } else if (rot === 90) {
-        tiltX = dy;
-        tiltY = dx;
-    } else if (rot === -90) {
-        tiltX = -dy;
-        tiltY = -dx;
-    }
-
-    document.getElementById('tiltX').textContent = tiltX.toFixed(2);
-    document.getElementById('tiltY').textContent = tiltY.toFixed(2);
+    if (rot === 0) { tiltX = -dx; tiltY = dy; }
+    else if (rot === 90) { tiltX = dy; tiltY = dx; }
+    else if (rot === -90) { tiltX = -dy; tiltY = -dx; }
 }
 
 function update() {
     if (!gameRunning) return;
 
-    // Apply force only outside deadzone
-    let forceX = Math.abs(tiltX) > dot.deadzone ? tiltX : 0;
-    let forceY = Math.abs(tiltY) > dot.deadzone ? tiltY : 0;
+    let forceX = Math.abs(tiltX) > CONFIG.deadzone ? tiltX : 0;
+    let forceY = Math.abs(tiltY) > CONFIG.deadzone ? tiltY : 0;
 
-    // Apply acceleration
-    dot.vx += forceX * dot.sensitivity;
-    dot.vy += forceY * dot.sensitivity;
+    // Apply forces based on your logic:
+    // If no touch, both move. If one side held, only that side moves.
+    const controlAll = !touchL && !touchR;
+    
+    if (controlAll || touchL) {
+        ballL.vx += forceX * CONFIG.sensitivity;
+        ballL.vy += forceY * CONFIG.sensitivity;
+    }
+    if (controlAll || touchR) {
+        ballR.vx += forceX * CONFIG.sensitivity;
+        ballR.vy += forceY * CONFIG.sensitivity;
+    }
 
-    // Apply Friction (Stops the ball)
-    dot.vx *= dot.friction;
-    dot.vy *= dot.friction;
+    // Move
+    ballL.x += ballL.vx; ballL.y += ballL.vy;
+    ballR.x += ballR.vx; ballR.y += ballR.vy;
 
-    // Position
-    dot.x += dot.vx;
-    dot.y += dot.vy;
+    // Apply Friction
+    ballL.vx *= CONFIG.friction; ballL.vy *= CONFIG.friction;
+    ballR.vx *= CONFIG.friction; ballR.vy *= CONFIG.friction;
 
-    // Hard Bounds
-    if (dot.x < dot.radius) { dot.x = dot.radius; dot.vx = 0; }
-    if (dot.x > canvas.width - dot.radius) { dot.x = canvas.width - dot.radius; dot.vx = 0; }
-    if (dot.y < dot.radius) { dot.y = dot.radius; dot.vy = 0; }
-    if (dot.y > canvas.height - dot.radius) { dot.y = canvas.height - dot.radius; dot.vy = 0; }
+    // Constrain distance (Rigid Link)
+    const dx = ballR.x - ballL.x;
+    const dy = ballR.y - ballL.y;
+    const distance = Math.sqrt(dx*dx + dy*dy);
+    const diff = (CONFIG.linkLength - distance) / distance;
+    const offsetX = dx * diff * 0.5;
+    const offsetY = dy * diff * 0.5;
+
+    ballL.x -= offsetX; ballL.y -= offsetY;
+    ballR.x += offsetX; ballR.y += offsetY;
+
+    // Screen Bounds (Simple)
+    [ballL, ballR].forEach(b => {
+        if (b.x < 20) b.x = 20; if (b.x > canvas.width - 20) b.x = canvas.width - 20;
+        if (b.y < 20) b.y = 20; if (b.y > canvas.height - 20) b.y = canvas.height - 20;
+    });
 }
 
 function draw() {
@@ -111,57 +135,42 @@ function draw() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
-    // Target/Safe Zone
-    ctx.strokeStyle = "rgba(0, 150, 136, 0.3)";
-    ctx.setLineDash([5, 5]);
-    ctx.strokeRect(canvas.width/2 - 40, canvas.height/2 - 40, 80, 80);
-    ctx.setLineDash([]);
-
-    // The Ball
-    ctx.shadowColor = "#00E676";
-    ctx.shadowBlur = 15;
-    ctx.fillStyle = "#00E676";
+    // Draw Line
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(dot.x, dot.y, dot.radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    ctx.moveTo(ballL.x, ballL.y);
+    ctx.lineTo(ballR.x, ballR.y);
+    ctx.stroke();
+
+    // Draw Balls
+    ctx.fillStyle = touchL ? "#2196F3" : "#555";
+    ctx.beginPath(); ctx.arc(ballL.x, ballL.y, 15, 0, Math.PI*2); ctx.fill();
+    
+    ctx.fillStyle = touchR ? "#2196F3" : "#555";
+    ctx.beginPath(); ctx.arc(ballR.x, ballR.y, 15, 0, Math.PI*2); ctx.fill();
 }
 
-function loop() {
-    update();
-    draw();
-    requestAnimationFrame(loop);
-}
+function loop() { update(); draw(); requestAnimationFrame(loop); }
 loop();
 
 async function startGame() {
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        const response = await DeviceMotionEvent.requestPermission();
-        if (response !== 'granted') return;
+        const res = await DeviceMotionEvent.requestPermission();
+        if (res !== 'granted') return;
     }
-
-    document.getElementById('status').textContent = "Calibrating in 1s...";
-    startBtn.style.opacity = "0.5";
-    startBtn.disabled = true;
-
-    // Wait 1 second so the "tap" motion doesn't ruin the calibration
     setTimeout(() => {
         window.addEventListener("devicemotion", (e) => {
-            const acc = e.accelerationIncludingGravity;
-            baseGX = acc.x;
-            baseGY = acc.y;
-            baseGZ = acc.z;
-            
+            baseGX = e.accelerationIncludingGravity.x;
+            baseGY = e.accelerationIncludingGravity.y;
             startBtn.style.display = "none";
             gameRunning = true;
-            dot.x = canvas.width / 2;
-            dot.y = canvas.height / 2;
-            document.getElementById('status').textContent = "Running!";
+            ballL = { x: canvas.width/2 - 75, y: canvas.height/2, vx: 0, vy: 0 };
+            ballR = { x: canvas.width/2 + 75, y: canvas.height/2, vx: 0, vy: 0 };
             window.addEventListener("devicemotion", handleMotion);
         }, { once: true });
-    }, 1000);
+    }, 500);
 }
-
 startBtn.addEventListener("click", startGame);
 </script>
 </body>
