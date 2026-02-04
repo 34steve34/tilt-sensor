@@ -83,10 +83,11 @@ let gameRunning = false;
 let startTime = 0;
 let activeQuadrant = null;
 let gracePeriod = 0;
-let justStarted = false; // Blocks the first canvas touch after START
+let justStarted = false;
 
-let baseBeta = 0;
-let baseGamma = 0;
+// Gravity-based tilt (works in any orientation!)
+let baseGravityX = 0;
+let baseGravityY = 0;
 let tiltX = 0;
 let tiltY = 0;
 
@@ -112,19 +113,29 @@ function randomizeAll() {
     for (let i = 0; i < points.length; i++) randomizePoint(i);
 }
 
-// Orientation handling - FIXED: check for null explicitly, not falsy
-function handleOrientation(e) {
-    if (e.beta === null || e.gamma === null) return;
-    tiltX = e.gamma - baseGamma;
-    tiltY = e.beta  - baseBeta;
-    tiltX = Math.max(-35, Math.min(35, tiltX));
-    tiltY = Math.max(-35, Math.min(35, tiltY));
+// GRAVITY-BASED tilt handling - works in landscape!
+function handleMotion(e) {
+    if (!e.accelerationIncludingGravity) return;
+    
+    const gx = e.accelerationIncludingGravity.x;
+    const gy = e.accelerationIncludingGravity.y;
+    
+    if (gx === null || gy === null) return;
+    
+    // Calculate relative tilt from baseline (calibrated neutral)
+    // X and Y map directly to screen coordinates in landscape
+    tiltX = gx - baseGravityX;
+    tiltY = gy - baseGravityY;
+    
+    // Clamp to reasonable range
+    tiltX = Math.max(-10, Math.min(10, tiltX));
+    tiltY = Math.max(-10, Math.min(10, tiltY));
 }
 
-// Touch controls - FIXED: skip if justStarted flag is set
+// Touch controls
 canvas.addEventListener("touchstart", e => {
     if (!gameRunning) return;
-    if (justStarted) return; // Block the bubble-through touch from START button
+    if (justStarted) return;
     e.preventDefault();
     const t = e.touches[0];
     const r = canvas.getBoundingClientRect();
@@ -158,9 +169,6 @@ function linesIntersect(p1, p2, p3, p4) {
 }
 
 function squareValid() {
-    // Only check opposite edges: top vs bottom, left vs right
-    // top=0-1, right=1-3, bottom=3-2, left=2-0
-    // Opposite pairs: [0,1] vs [3,2] and [1,3] vs [2,0]
     if (linesIntersect(points[0], points[1], points[3], points[2])) return false;
     if (linesIntersect(points[1], points[3], points[2], points[0])) return false;
     return true;
@@ -183,7 +191,7 @@ function update() {
         if (i === activeQuadrant && activeQuadrant !== null) {
             const angle = Math.atan2(tiltY, tiltX);
             const mag = Math.hypot(tiltX, tiltY);
-            const speed = Math.min(mag * 0.12, 6);
+            const speed = Math.min(mag * 0.4, 6);
             p.vx = Math.cos(angle) * speed;
             p.vy = Math.sin(angle) * speed;
         } else {
@@ -204,7 +212,7 @@ function draw() {
     ctx.fillStyle = "#0a0a0a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Draw quadrant background colors (always visible)
+    // Draw quadrant background colors
     ctx.fillStyle = COLORS[0].quad;
     ctx.fillRect(0, 0, canvas.width/2, canvas.height/2);
 
@@ -217,7 +225,7 @@ function draw() {
     ctx.fillStyle = COLORS[3].quad;
     ctx.fillRect(canvas.width/2, canvas.height/2, canvas.width/2, canvas.height/2);
 
-    // Draw quadrant divider lines
+    // Draw quadrant dividers
     ctx.strokeStyle = "rgba(255,255,255,0.15)";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -227,7 +235,6 @@ function draw() {
     ctx.lineTo(canvas.width, canvas.height/2);
     ctx.stroke();
 
-    // Skip game rendering until points are initialized
     if (!gameRunning || points.length === 0) return;
 
     // Brighten active quadrant
@@ -238,19 +245,12 @@ function draw() {
         ctx.fillRect(qx, qy, canvas.width/2, canvas.height/2);
     }
 
-    // Draw edges - each half colored by its endpoint
-    const edges = [
-        [0, 1],  // top
-        [1, 3],  // right
-        [3, 2],  // bottom
-        [2, 0]   // left
-    ];
-
+    // Draw edges
+    const edges = [[0,1],[1,3],[3,2],[2,0]];
     edges.forEach(([a, b]) => {
         const midX = (points[a].x + points[b].x) / 2;
         const midY = (points[a].y + points[b].y) / 2;
 
-        // First half - color of point a
         ctx.strokeStyle = COLORS[a].point;
         ctx.lineWidth = 3;
         ctx.beginPath();
@@ -258,7 +258,6 @@ function draw() {
         ctx.lineTo(midX, midY);
         ctx.stroke();
 
-        // Second half - color of point b
         ctx.strokeStyle = COLORS[b].point;
         ctx.beginPath();
         ctx.moveTo(midX, midY);
@@ -266,20 +265,17 @@ function draw() {
         ctx.stroke();
     });
 
-    // Draw points with glow
+    // Draw points
     points.forEach((p, i) => {
         ctx.shadowColor = COLORS[i].point;
         ctx.shadowBlur = i === activeQuadrant ? 20 : 10;
-
         ctx.fillStyle = COLORS[i].point;
         ctx.beginPath();
         ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
         ctx.fill();
-
         ctx.shadowBlur = 0;
     });
 
-    // Update score
     if (gameRunning) {
         scoreEl.textContent = `Time: ${((Date.now()-startTime)/1000).toFixed(1)}s`;
     }
@@ -292,32 +288,43 @@ function loop() {
 }
 loop();
 
-// Start game handler
+// Start game - CALIBRATE GRAVITY
 function startGame(e) {
     if (e) e.preventDefault();
-    if (e) e.stopPropagation(); // FIXED: stop touch from bubbling to canvas
+    if (e) e.stopPropagation();
     if (gameRunning) return;
 
     startBtn.style.display = "none";
     gameRunning = true;
-    gracePeriod = 90; // ~1.5s at 60fps
+    gracePeriod = 90;
     startTime = Date.now();
 
-    // Block the next canvas touchstart (bubble-through from this tap)
     justStarted = true;
     setTimeout(() => { justStarted = false; }, 200);
 
     resetPoints();
     randomizeAll();
 
+    // Reset calibration
+    baseGravityX = 0;
+    baseGravityY = 0;
+
+    // Calibrate to current gravity as neutral position
     function calibrate(ev) {
-        baseBeta = ev.beta || 0;
-        baseGamma = ev.gamma || 0;
-        window.removeEventListener("deviceorientation", calibrate);
+        if (ev.accelerationIncludingGravity) {
+            baseGravityX = ev.accelerationIncludingGravity.x || 0;
+            baseGravityY = ev.accelerationIncludingGravity.y || 0;
+            console.log(`Calibrated! Neutral: X=${baseGravityX.toFixed(2)}, Y=${baseGravityY.toFixed(2)}`);
+        }
     }
 
-    window.addEventListener("deviceorientation", calibrate, { once: true });
-    window.addEventListener("deviceorientation", handleOrientation);
+    // Calibrate on first motion event, then start listening
+    window.addEventListener("devicemotion", calibrate, { once: true });
+    
+    // Start continuous motion listening after calibration
+    setTimeout(() => {
+        window.addEventListener("devicemotion", handleMotion);
+    }, 100);
 }
 
 startBtn.addEventListener("click", startGame);
