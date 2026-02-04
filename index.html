@@ -3,70 +3,34 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test</title>
+<title>Tilt Test v4</title>
 
 <style>
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-body {
-    background: #1a1a1a;
-    overflow: hidden;
-    touch-action: none;
-    font-family: monospace;
-}
-#gameCanvas {
-    display: block;
-    background: #0a0a0a;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a1a; overflow: hidden; touch-action: none; font-family: monospace; }
+#gameCanvas { display: block; background: #0a0a0a; }
 #startBtn {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    padding: 20px 60px;
-    font-size: 32px;
-    background: #4CAF50;
-    color: white;
-    border: none;
-    border-radius: 12px;
-    cursor: pointer;
-    z-index: 10;
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    padding: 20px 60px; font-size: 32px; background: #4CAF50; color: white;
+    border: none; border-radius: 12px; cursor: pointer; z-index: 10;
 }
-#info {
-    position: absolute;
-    top: 16px;
-    left: 16px;
-    font-size: 18px;
-    color: white;
-    z-index: 5;
-    line-height: 1.6;
-}
-#version {
-    position: absolute;
-    bottom: 16px;
-    right: 16px;
-    font-size: 14px;
-    color: rgba(255,255,255,0.5);
-    z-index: 5;
-}
+#info { position: absolute; top: 16px; left: 16px; font-size: 18px; color: white; z-index: 5; line-height: 1.6; }
+#version { position: absolute; bottom: 16px; right: 16px; font-size: 14px; color: rgba(255,255,255,0.5); z-index: 5; }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="info">
-    Version 3<br>
+    Version 4<br>
     TiltX: <span id="tiltX">0</span><br>
     TiltY: <span id="tiltY">0</span><br>
-    Orientation: <span id="orient">unknown</span>
+    Orient: <span id="orient">detecting...</span>
 </div>
-<div id="version">v3.0</div>
+<div id="version">v4.0</div>
 <button id="startBtn">START</button>
 
 <script>
-const VERSION = 3;
+const VERSION = 4;
 
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
@@ -79,21 +43,17 @@ function resize() {
 resize();
 window.addEventListener("resize", resize);
 
-// Game state
 let gameRunning = false;
-let baseGravityX = 0;
-let baseGravityY = 0;
-let baseGravityZ = 0;
 let tiltX = 0;
 let tiltY = 0;
-let orientation = "unknown"; // "port-up", "port-down", "land-left", "land-right"
 
-// Single dot
+// Dot physics
 let dot = {
-    x: 0,
-    y: 0,
-    vx: 0,
-    vy: 0
+    x: 0, y: 0,
+    vx: 0, vy: 0,
+    radius: 20,
+    friction: 0.98,
+    gravityMulti: 0.25 // Sensitivity
 };
 
 function resetDot() {
@@ -103,155 +63,93 @@ function resetDot() {
     dot.vy = 0;
 }
 
-// Detect orientation based on gravity vector
-function detectOrientation(gx, gy, gz) {
-    const ax = Math.abs(gx);
-    const ay = Math.abs(gy);
-    const az = Math.abs(gz);
-    
-    // Which axis has strongest gravity?
-    if (az > ax && az > ay) {
-        // Z is dominant - phone is flat
-        return gz > 0 ? "flat-up" : "flat-down";
-    } else if (ay > ax) {
-        // Y is dominant - portrait mode
-        return gy > 0 ? "port-down" : "port-up";
-    } else {
-        // X is dominant - landscape mode
-        return gx > 0 ? "land-right" : "land-left";
-    }
-}
-
-// Map gravity to screen tilt based on orientation
-function mapGravityToScreen(gx, gy, gz) {
-    let screenX = 0;
-    let screenY = 0;
-    
-    switch(orientation) {
-        case "land-left":
-            // Charging port on LEFT, top of phone points RIGHT
-            // When you tilt top-down, gravity Y increases (positive)
-            // When you tilt left-right, gravity Z increases
-            screenX = gz - baseGravityZ;  // left/right tilt
-            screenY = gy - baseGravityY;  // forward/back tilt
-            break;
-            
-        case "land-right":
-            // Charging port on RIGHT, top of phone points LEFT
-            screenX = -(gz - baseGravityZ);  // reversed
-            screenY = -(gy - baseGravityY);  // reversed
-            break;
-            
-        case "port-up":
-            // Normal portrait, charging port down
-            screenX = gx - baseGravityX;
-            screenY = gy - baseGravityY;
-            break;
-            
-        case "port-down":
-            // Upside-down portrait
-            screenX = -(gx - baseGravityX);
-            screenY = -(gy - baseGravityY);
-            break;
-            
-        default:
-            // Fallback
-            screenX = gx - baseGravityX;
-            screenY = gy - baseGravityY;
-    }
-    
-    return { x: screenX, y: screenY };
-}
-
-// GRAVITY-BASED tilt handling
 function handleMotion(e) {
     if (!e.accelerationIncludingGravity) return;
     
-    const gx = e.accelerationIncludingGravity.x;
-    const gy = e.accelerationIncludingGravity.y;
-    const gz = e.accelerationIncludingGravity.z;
-    
-    if (gx === null || gy === null || gz === null) return;
-    
-    // Map to screen coordinates
-    const mapped = mapGravityToScreen(gx, gy, gz);
-    tiltX = mapped.x;
-    tiltY = mapped.y;
-    
-    // Update debug display
+    // In mobile browsers:
+    // x: + left, y: + bottom-to-top, z: + skyward
+    // We invert them so the ball "falls" toward the tilt.
+    let accelX = e.accelerationIncludingGravity.x;
+    let accelY = e.accelerationIncludingGravity.y;
+
+    // Detect screen orientation (landscape vs portrait)
+    // window.orientation is deprecated but still the most reliable for simple games
+    const rotation = window.orientation || 0;
+
+    if (rotation === 0) {
+        // Portrait: X is left/right, Y is up/down
+        tiltX = -accelX;
+        tiltY = accelY;
+    } else if (rotation === 90) {
+        // Landscape (left): Y is left/right, X is up/down
+        tiltX = accelY;
+        tiltY = accelX;
+    } else if (rotation === -90) {
+        // Landscape (right): Y is left/right, X is up/down
+        tiltX = -accelY;
+        tiltY = -accelX;
+    } else if (rotation === 180) {
+        // Upside down
+        tiltX = accelX;
+        tiltY = -accelY;
+    }
+
     document.getElementById('tiltX').textContent = tiltX.toFixed(2);
     document.getElementById('tiltY').textContent = tiltY.toFixed(2);
-    document.getElementById('orient').textContent = orientation;
+    document.getElementById('orient').textContent = rotation + "deg";
 }
 
-// Update logic
 function update() {
     if (!gameRunning) return;
 
-    // Apply tilt to velocity
-    const angle = Math.atan2(tiltY, tiltX);
-    const mag = Math.hypot(tiltX, tiltY);
-    const speed = Math.min(mag * 0.5, 8);
-    
-    dot.vx = Math.cos(angle) * speed;
-    dot.vy = Math.sin(angle) * speed;
+    // Apply tilt as ACCELERATION (adding to velocity)
+    dot.vx += tiltX * dot.gravityMulti;
+    dot.vy += tiltY * dot.gravityMulti;
+
+    // Apply friction (so it doesn't slide forever)
+    dot.vx *= dot.friction;
+    dot.vy *= dot.friction;
 
     // Update position
     dot.x += dot.vx;
     dot.y += dot.vy;
 
-    // Bounce off walls
-    if (dot.x < 30) {
-        dot.x = 30;
-        dot.vx *= -0.8;
+    // Wall Collisions
+    if (dot.x < dot.radius) {
+        dot.x = dot.radius;
+        dot.vx *= -0.5; // Bounce
+    } else if (dot.x > canvas.width - dot.radius) {
+        dot.x = canvas.width - dot.radius;
+        dot.vx *= -0.5;
     }
-    if (dot.x > canvas.width - 30) {
-        dot.x = canvas.width - 30;
-        dot.vx *= -0.8;
-    }
-    if (dot.y < 30) {
-        dot.y = 30;
-        dot.vy *= -0.8;
-    }
-    if (dot.y > canvas.height - 30) {
-        dot.y = canvas.height - 30;
-        dot.vy *= -0.8;
+
+    if (dot.y < dot.radius) {
+        dot.y = dot.radius;
+        dot.vy *= -0.5;
+    } else if (dot.y > canvas.height - dot.radius) {
+        dot.y = canvas.height - dot.radius;
+        dot.vy *= -0.5;
     }
 }
 
-// Draw function
 function draw() {
     ctx.fillStyle = "#0a0a0a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     if (!gameRunning) return;
 
-    // Draw crosshair at center
-    ctx.strokeStyle = "rgba(255,255,255,0.2)";
-    ctx.lineWidth = 1;
+    // Draw Target/Center
+    ctx.strokeStyle = "rgba(255,255,255,0.1)";
     ctx.beginPath();
-    ctx.moveTo(canvas.width/2 - 20, canvas.height/2);
-    ctx.lineTo(canvas.width/2 + 20, canvas.height/2);
-    ctx.moveTo(canvas.width/2, canvas.height/2 - 20);
-    ctx.lineTo(canvas.width/2, canvas.height/2 + 20);
+    ctx.arc(canvas.width/2, canvas.height/2, 50, 0, Math.PI*2);
     ctx.stroke();
-
-    // Draw velocity vector
-    if (Math.hypot(dot.vx, dot.vy) > 0.5) {
-        ctx.strokeStyle = "rgba(255,255,255,0.5)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(dot.x, dot.y);
-        ctx.lineTo(dot.x + dot.vx * 10, dot.y + dot.vy * 10);
-        ctx.stroke();
-    }
 
     // Draw dot
     ctx.shadowColor = "#00E676";
-    ctx.shadowBlur = 20;
+    ctx.shadowBlur = 15;
     ctx.fillStyle = "#00E676";
     ctx.beginPath();
-    ctx.arc(dot.x, dot.y, 20, 0, Math.PI * 2);
+    ctx.arc(dot.x, dot.y, dot.radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.shadowBlur = 0;
 }
@@ -263,58 +161,27 @@ function loop() {
 }
 loop();
 
-// Start game
-function startGame(e) {
-    if (e) {
-        e.preventDefault();
-        e.stopPropagation();
-    }
-    if (gameRunning) return;
-
-    startBtn.style.display = "none";
-    gameRunning = true;
-
-    resetDot();
-
-    // Reset calibration
-    baseGravityX = 0;
-    baseGravityY = 0;
-    baseGravityZ = 0;
-
-    // Calibrate on first motion event
-    function calibrate(ev) {
-        if (ev.accelerationIncludingGravity) {
-            const gx = ev.accelerationIncludingGravity.x || 0;
-            const gy = ev.accelerationIncludingGravity.y || 0;
-            const gz = ev.accelerationIncludingGravity.z || 0;
-            
-            // Detect orientation
-            orientation = detectOrientation(gx, gy, gz);
-            
-            // Set baseline
-            baseGravityX = gx;
-            baseGravityY = gy;
-            baseGravityZ = gz;
-            
-            console.log(`Version ${VERSION} - Calibrated!`);
-            console.log(`Orientation: ${orientation}`);
-            console.log(`Gravity: X=${gx.toFixed(2)}, Y=${gy.toFixed(2)}, Z=${gz.toFixed(2)}`);
-            
-            document.getElementById('orient').textContent = orientation;
+async function startGame() {
+    // Request permission for iOS 13+
+    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        try {
+            const response = await DeviceMotionEvent.requestPermission();
+            if (response !== 'granted') {
+                alert("Permission denied");
+                return;
+            }
+        } catch (e) {
+            console.error(e);
         }
     }
 
-    window.addEventListener("devicemotion", calibrate, { once: true });
-    
-    setTimeout(() => {
-        window.addEventListener("devicemotion", handleMotion);
-    }, 100);
+    startBtn.style.display = "none";
+    gameRunning = true;
+    resetDot();
+    window.addEventListener("devicemotion", handleMotion);
 }
 
 startBtn.addEventListener("click", startGame);
-startBtn.addEventListener("touchstart", startGame);
-
-console.log(`Tilt Test Version ${VERSION} loaded`);
 </script>
 </body>
 </html>
