@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v22</title>
+<title>Trench Run v22.1</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #000; overflow: hidden; touch-action: none; font-family: monospace; color: #00E676; }
 #gameCanvas { display: block; }
-#ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
+#ui { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 2px 2px #000; }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     padding: 20px 40px; font-size: 20px; background: #00E676; color: #000;
@@ -19,7 +19,7 @@ body { background: #000; overflow: hidden; touch-action: none; font-family: mono
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="ui">DIST: <span id="dist">0</span>m | LVL: <span id="lvl">1</span></div>
-<button id="startBtn">START TRENCH RUN</button>
+<button id="startBtn">START MISSION</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -30,17 +30,24 @@ let gameRunning = false;
 let touchL = false, touchR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
-let distance = 0;
-let level = 1;
+let distance = 0, level = 1;
 
+// TUNING
 const CONFIG = {
-    rotTorque: 0.0016, driftSens: 0.088, driftFriction: 0.95, rotFriction: 0.97,
-    trenchSpeed: 0.015, curveDrift: 0.5, gateFrequency: 8
+    rotTorque: 0.0016, 
+    driftSens: 0.088, 
+    driftFriction: 0.95, 
+    rotFriction: 0.97,
+    trenchSpeed: 0.012, 
+    curveDrift: 0.4, 
+    gateFrequency: 12,
+    baseWidth: 400,
+    baseHeight: 300
 };
 
-let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, vAngle: 0, size: 40 };
-let gates = []; // The corridor frames
-let pathX = 0, pathY = 0; // The moving center of the "tunnel"
+let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, vAngle: 0, nose: 35, wing: 25 };
+let gates = []; 
+let pathX = 0, pathY = 0; 
 let frameCount = 0;
 let lastAcc = null;
 
@@ -53,7 +60,6 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
-// 1. INPUT HANDLING
 window.addEventListener("touchstart", (e) => {
     if (!gameRunning) return;
     for(let t of e.touches) {
@@ -66,65 +72,67 @@ window.addEventListener("touchend", () => { touchL = false; touchR = false; });
 window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
     if (!gameRunning || !lastAcc) return;
-    // v21.1 Mapping
     tiltY = Math.max(-3, Math.min(3, lastAcc.x - baseGY));
     tiltX = Math.max(-3, Math.min(3, lastAcc.y - baseGX));
 });
 
-// 2. GENERATE THE CORRIDOR
 function spawnGate() {
     gates.push({
-        z: 1.5, // Start far away (Z depth)
-        cx: pathX, cy: pathY, // The center point when this gate was born
-        w: 600, h: 400
+        z: 4.0, // Start much further back for better perspective
+        cx: pathX, cy: pathY,
+        w: CONFIG.baseWidth, h: CONFIG.baseHeight
     });
 }
 
-// 3. CORE LOOP
 function update() {
     if (!gameRunning) return;
 
-    distance += CONFIG.trenchSpeed * 10;
+    distance += CONFIG.trenchSpeed * 20;
     frameCount++;
 
-    // Shift path curvature
-    pathX += Math.sin(frameCount * 0.02) * CONFIG.curveDrift;
-    pathY += Math.cos(frameCount * 0.015) * CONFIG.curveDrift;
+    // Curve the path
+    pathX += Math.sin(frameCount * 0.01) * CONFIG.curveDrift;
+    pathY += Math.cos(frameCount * 0.012) * CONFIG.curveDrift;
 
-    // Spawn new gates periodically
     if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
 
-    // Ship Rotation
+    // Flight Physics
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle;
     ship.vAngle *= CONFIG.rotFriction;
 
-    // Ship Translation
     ship.vx += tiltX * CONFIG.driftSens;
     ship.vy += tiltY * CONFIG.driftSens;
     ship.x += ship.vx; ship.y += ship.vy;
     ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
 
-    // Constrain ship to screen (for now, until we add wall collisions)
-    ship.x = Math.max(50, Math.min(canvas.width - 50, ship.x));
-    ship.y = Math.max(50, Math.min(canvas.height - 50, ship.y));
-
-    // Update Gate depths
+    // Update gates and check for collision with the "nearest" gate
     for (let i = gates.length - 1; i >= 0; i--) {
         gates[i].z -= CONFIG.trenchSpeed;
+        
+        // COLLISION CHECK: If gate is passing the player (Z is very small)
+        if (gates[i].z < 0.1 && gates[i].z > 0) {
+            const centerX = canvas.width/2 + (gates[i].cx / 0.1);
+            const centerY = canvas.height/2 + (gates[i].cy / 0.1);
+            const w = gates[i].w / 0.1;
+            const h = gates[i].h / 0.1;
+            
+            // Check if ship center is outside the green box
+            if (Math.abs(ship.x - centerX) > w/2 || Math.abs(ship.y - centerY) > h/2) {
+                gameOver();
+            }
+        }
         if (gates[i].z <= 0) gates.splice(i, 1);
     }
 
-    // Level up difficulty
-    if (Math.floor(distance / 2000) > level) {
-        level++;
-        CONFIG.trenchSpeed += 0.002;
-        CONFIG.curveDrift += 0.2;
-    }
-
     document.getElementById("dist").innerText = Math.floor(distance);
-    document.getElementById("lvl").innerText = level;
+}
+
+function gameOver() {
+    gameRunning = false;
+    alert("CRASHED! Distance: " + Math.floor(distance));
+    location.reload(); 
 }
 
 function draw() {
@@ -135,48 +143,52 @@ function draw() {
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
 
-    // Draw Trench Gates
-    ctx.lineWidth = 2;
+    // Draw Trench
     for (let i = 0; i < gates.length; i++) {
         let g = gates[i];
         let scale = 1 / g.z;
-        let screenW = g.w * scale;
-        let screenH = g.h * scale;
-        let screenX = centerX + (g.cx * scale);
-        let screenY = centerY + (g.cy * scale);
+        let sW = g.w * scale;
+        let sH = g.h * scale;
+        let sX = centerX + (g.cx * scale);
+        let sY = centerY + (g.cy * scale);
 
-        // Neon Glow effect
-        ctx.strokeStyle = `rgba(0, 230, 118, ${1 - g.z/1.5})`;
-        ctx.strokeRect(screenX - screenW/2, screenY - screenH/2, screenW, screenH);
+        // Green Box
+        ctx.strokeStyle = `rgba(0, 230, 118, ${Math.min(1, 1/g.z)})`;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
 
-        // Draw connecting vertices to the next gate
-        if (i > 0) {
-            let prev = gates[i-1];
-            let pScale = 1 / prev.z;
-            let pX = centerX + (prev.cx * pScale);
-            let pY = centerY + (prev.cy * pScale);
-            let pW = prev.w * pScale;
-            let pH = prev.h * pScale;
+        // Orange Connectors to the NEXT (further) gate
+        if (i < gates.length - 1) {
+            let next = gates[i+1];
+            let nScale = 1 / next.z;
+            let nX = centerX + (next.cx * nScale);
+            let nY = centerY + (next.cy * nScale);
+            let nW = next.w * nScale;
+            let nH = next.h * nScale;
 
-            ctx.strokeStyle = `rgba(255, 165, 0, ${0.2 * (1 - g.z/1.5)})`; // Orange vertices
+            ctx.strokeStyle = "rgba(255, 140, 0, 0.4)";
+            ctx.lineWidth = 1;
             ctx.beginPath();
-            // Connect 4 corners
-            ctx.moveTo(screenX - screenW/2, screenY - screenH/2); ctx.lineTo(pX - pW/2, pY - pH/2);
-            ctx.moveTo(screenX + screenW/2, screenY - screenH/2); ctx.lineTo(pX + pW/2, pY - pH/2);
-            ctx.moveTo(screenX - screenW/2, screenY + screenH/2); ctx.lineTo(pX - pW/2, pY + pH/2);
-            ctx.moveTo(screenX + screenW/2, screenY + screenH/2); ctx.lineTo(pX + pW/2, pY + pH/2);
+            ctx.moveTo(sX - sW/2, sY - sH/2); ctx.lineTo(nX - nW/2, nY - nH/2);
+            ctx.moveTo(sX + sW/2, sY - sH/2); ctx.lineTo(nX + nW/2, nY - nH/2);
+            ctx.moveTo(sX - sW/2, sY + sH/2); ctx.lineTo(nX - nW/2, nY + nH/2);
+            ctx.moveTo(sX + sW/2, sY + sH/2); ctx.lineTo(nX + nW/2, nY + nH/2);
             ctx.stroke();
         }
     }
 
-    // Draw Ship
+    // Draw Symmetrical Aircraft
     ctx.save();
     ctx.translate(ship.x, ship.y);
     ctx.rotate(ship.angle);
-    ctx.strokeStyle = "#FFF";
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(30, 0); ctx.lineTo(-15, -20); ctx.lineTo(-15, 20); ctx.closePath();
+    ctx.moveTo(ship.nose, 0); // Nose
+    ctx.lineTo(-ship.wing, -ship.wing); // Left Wing
+    ctx.lineTo(-ship.wing/2, 0); // Tail notch
+    ctx.lineTo(-ship.wing, ship.wing); // Right Wing
+    ctx.closePath();
     ctx.stroke();
     ctx.restore();
 }
