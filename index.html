@@ -3,48 +3,56 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v16</title>
+<title>Tilt Test v17 - Trig</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; }
+body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; color: #4fc3f7; }
 #gameCanvas { display: block; background: radial-gradient(circle, #0a1628 0%, #050b14 100%); }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    padding: 20px 60px; font-size: 24px; background: #00E676; color: #050b14;
+    padding: 20px 40px; font-size: 20px; background: #00E676; color: #050b14;
     border: none; border-radius: 12px; cursor: pointer; z-index: 100; font-weight: bold;
 }
-#info { position: absolute; top: 16px; left: 16px; font-size: 12px; color: #4fc3f7; pointer-events: none; }
+#info { position: absolute; top: 16px; left: 16px; font-size: 12px; pointer-events: none; }
 #version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.3); }
+#warning { 
+    position: absolute; top: 70%; left: 50%; transform: translate(-50%, -50%);
+    color: #ff5252; font-weight: bold; display: none; text-align: center; width: 80%;
+}
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="info">Hold at your comfortable 45° angle<br>then press START to calibrate.</div>
-<div id="version">v16.0 (Calibrated)</div>
-<button id="startBtn">START & CALIBRATE</button>
+<div id="info">Pitch: <span id="curPitch">0</span>°<br>Target Range: ±30°</div>
+<div id="warning">PHONE TOO STEEP!<br>Tilt screen toward your face to calibrate.</div>
+<div id="version">v17.0 (Trig / 30° Range)</div>
+<button id="startBtn">CALIBRATE & START</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
+const warningEl = document.getElementById("warning");
 
 let gameRunning = false;
-let tiltX = 0, tiltY = 0;
-let baseGX = 0, baseGY = 0; // Calibration offsets
 let touchL = false, touchR = false;
 
-// Your settled "Magic Numbers"
+// Physics Multipliers
 const CONFIG = {
     rotTorque: 0.002,
     rotFriction: 0.97,
-    driftSens: 0.11,
+    driftSens: 2.5,        // Adjusted for Trig output
     driftFriction: 0.95,
-    deadzone: 0.4, // Tightened deadzone for better response
+    maxTiltRange: 30 * (Math.PI / 180), // 30 degrees in Radians
     wingWidth: 100,
     noseLength: 50
 };
 
+// State
 let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI / 2, vAngle: 0 };
+let basePitch = 0; // Calibration zero point
+let currentPitch = 0;
+let currentRoll = 0;
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -67,25 +75,35 @@ window.addEventListener("touchend", updateTouches);
 function handleMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc) return;
+
+    // 1. Extract Pitch (Angle of phone face relative to ground)
+    // We use Y and Z to determine the forward/backward tilt
+    currentPitch = Math.atan2(acc.y, acc.z);
     
-    // Normalize based on the initial calibration point
-    tiltX = acc.y - baseGY; 
-    tiltY = acc.x - baseGX;
+    // 2. Extract Roll (Side to side tilt)
+    currentRoll = acc.x / 9.8; // Simple linear is fine for roll
+
+    document.getElementById("curPitch").innerText = Math.round(currentPitch * (180/Math.PI));
 }
 
 function update() {
     if (!gameRunning) return;
 
-    // 1. Rotation Logic
+    // --- ROTATION ---
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle;
     ship.vAngle *= CONFIG.rotFriction;
 
-    // 2. Linear Translation (Tilt)
-    let forceX = Math.abs(tiltX) > CONFIG.deadzone ? tiltX : 0;
-    let forceY = Math.abs(tiltY) > CONFIG.deadzone ? tiltY : 0;
+    // --- TRANSLATION (The Trig Solution) ---
+    // Calculate how far we are from calibration point
+    let pitchDelta = currentPitch - basePitch;
     
+    // Normalize and Clamp to the 30 degree range
+    // This turns a -30 to +30 degree movement into a -1.0 to +1.0 force
+    let forceY = Math.max(-1, Math.min(1, pitchDelta / CONFIG.maxTiltRange));
+    let forceX = Math.max(-1, Math.min(1, currentRoll)); // Roll is usually simpler
+
     ship.vx += forceX * CONFIG.driftSens;
     ship.vy += forceY * CONFIG.driftSens;
     
@@ -95,7 +113,7 @@ function update() {
     ship.vx *= CONFIG.driftFriction;
     ship.vy *= CONFIG.driftFriction;
 
-    // 3. Screen Wrap
+    // --- WRAP ---
     if (ship.x < 0) ship.x = canvas.width;
     else if (ship.x > canvas.width) ship.x = 0;
     if (ship.y < 0) ship.y = canvas.height;
@@ -107,7 +125,6 @@ function draw() {
     if (!gameRunning) return;
 
     const hw = CONFIG.wingWidth / 2;
-    // Wingtip positions
     const lX = ship.x + Math.cos(ship.angle - Math.PI/2) * hw;
     const lY = ship.y + Math.sin(ship.angle - Math.PI/2) * hw;
     const rX = ship.x + Math.cos(ship.angle + Math.PI/2) * hw;
@@ -115,7 +132,6 @@ function draw() {
     const nX = ship.x + Math.cos(ship.angle) * CONFIG.noseLength;
     const nY = ship.y + Math.sin(ship.angle) * CONFIG.noseLength;
 
-    // Draw Ship
     ctx.fillStyle = "rgba(0, 230, 118, 0.2)";
     ctx.strokeStyle = "#00E676";
     ctx.lineWidth = 3;
@@ -124,18 +140,9 @@ function draw() {
     ctx.closePath();
     ctx.fill(); ctx.stroke();
 
-    // Corrected Engine Glow
-    if (touchL) {
-        drawGlow(lX, lY);
-    }
-    if (touchR) {
-        drawGlow(rX, rY);
-    }
-
-    // Engine Core Dots
-    ctx.fillStyle = "#00E676";
-    ctx.beginPath(); ctx.arc(lX, lY, 5, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(rX, rY, 5, 0, Math.PI*2); ctx.fill();
+    // Engine Glow
+    if (touchL) drawGlow(lX, lY);
+    if (touchR) drawGlow(rX, rY);
 }
 
 function drawGlow(x, y) {
@@ -143,9 +150,7 @@ function drawGlow(x, y) {
     ctx.shadowBlur = 15;
     ctx.shadowColor = "#FFF";
     ctx.fillStyle = "#FFF";
-    ctx.beginPath();
-    ctx.arc(x, y, 10, 0, Math.PI*2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI*2); ctx.fill();
     ctx.restore();
 }
 
@@ -157,25 +162,27 @@ async function startGame() {
         const res = await DeviceMotionEvent.requestPermission();
         if (res !== 'granted') return;
     }
-    
-    // Short delay to allow user to stabilize their hands after clicking
-    startBtn.innerText = "CALIBRATING...";
-    setTimeout(() => {
-        window.addEventListener("devicemotion", (e) => {
-            if (!gameRunning) {
-                // LOCK the current gravity vector as "Center"
-                baseGX = e.accelerationIncludingGravity.x;
-                baseGY = e.accelerationIncludingGravity.y;
-                gameRunning = true;
-                startBtn.style.display = "none";
-                ship.x = canvas.width / 2;
-                ship.y = canvas.height / 2;
-            }
-            handleMotion(e);
-        }, { passive: true });
-    }, 500);
+
+    // Continuous monitoring for calibration check
+    window.addEventListener("devicemotion", handleMotion);
+
+    startBtn.addEventListener("click", () => {
+        // Safety Check: If angle is > 80 degrees, it's too steep
+        const pitchDegrees = currentPitch * (180/Math.PI);
+        if (Math.abs(pitchDegrees) > 80) {
+            warningEl.style.display = "block";
+            return;
+        }
+
+        warningEl.style.display = "none";
+        basePitch = currentPitch; // Set the Zero Point
+        gameRunning = true;
+        startBtn.style.display = "none";
+        ship.x = canvas.width / 2;
+        ship.y = canvas.height / 2;
+    });
 }
-startBtn.addEventListener("click", startGame);
+startGame();
 </script>
 </body>
 </html>
