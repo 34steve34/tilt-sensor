@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v7</title>
+<title>Tilt Test v8</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #1a1a1a; overflow: hidden; touch-action: none; font-family: monospace; }
 #gameCanvas { display: block; background: #0a0a0a; }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    padding: 20px 60px; font-size: 24px; background: #9C27B0; color: white;
+    padding: 20px 60px; font-size: 24px; background: #009688; color: white;
     border: none; border-radius: 12px; cursor: pointer; z-index: 10;
 }
 #info { position: absolute; top: 16px; left: 16px; font-size: 16px; color: white; z-index: 5; line-height: 1.4; }
@@ -20,16 +20,16 @@ body { background: #1a1a1a; overflow: hidden; touch-action: none; font-family: m
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="info">
-    Version 7 (Auto-Calibrate)<br>
+    Version 8 (High Friction)<br>
     RelX: <span id="tiltX">0</span><br>
     RelY: <span id="tiltY">0</span><br>
-    <span id="status" style="color: #E91E63;">Hold phone comfortably and press START</span>
+    <span id="status" style="color: #00E676;">Press START and hold steady...</span>
 </div>
-<div id="version">v7.0</div>
-<button id="startBtn">START & CALIBRATE</button>
+<div id="version">v8.0</div>
+<button id="startBtn">START</button>
 
 <script>
-const VERSION = 7;
+const VERSION = 8;
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
@@ -37,18 +37,16 @@ const startBtn = document.getElementById("startBtn");
 let gameRunning = false;
 let tiltX = 0;
 let tiltY = 0;
+let baseGX = 0, baseGY = 0, baseGZ = 0;
 
-// Calibration Baselines
-let baseGX = 0;
-let baseGY = 0;
-let baseGZ = 0;
-
+// Physics Config
 let dot = {
     x: 0, y: 0,
     vx: 0, vy: 0,
     radius: 20,
-    friction: 0.93,
-    sensitivity: 0.6 // Adjust this for "weight"
+    friction: 0.85,    // High friction (v7 was 0.93)
+    sensitivity: 0.3, // Lower sensitivity (v7 was 0.6)
+    deadzone: 1.0     // Ignore small tilts (v7 was 0.4)
 };
 
 function resize() {
@@ -62,15 +60,11 @@ function handleMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc) return;
 
-    // Calculate the difference from our starting "Zero" point
-    // We use a simple subtraction to find the relative tilt
+    // Relative to baseline
     let dx = acc.x - baseGX;
     let dy = acc.y - baseGY;
-    let dz = acc.z - baseGZ;
 
     const rot = window.orientation || 0;
-
-    // Map the deltas to screen space based on orientation
     if (rot === 0) {
         tiltX = -dx;
         tiltY = dy;
@@ -89,25 +83,27 @@ function handleMotion(e) {
 function update() {
     if (!gameRunning) return;
 
-    // Deadzone to prevent micro-drifting
-    const deadzone = 0.4;
-    let forceX = Math.abs(tiltX) > deadzone ? tiltX : 0;
-    let forceY = Math.abs(tiltY) > deadzone ? tiltY : 0;
+    // Apply force only outside deadzone
+    let forceX = Math.abs(tiltX) > dot.deadzone ? tiltX : 0;
+    let forceY = Math.abs(tiltY) > dot.deadzone ? tiltY : 0;
 
+    // Apply acceleration
     dot.vx += forceX * dot.sensitivity;
     dot.vy += forceY * dot.sensitivity;
 
+    // Apply Friction (Stops the ball)
     dot.vx *= dot.friction;
     dot.vy *= dot.friction;
 
+    // Position
     dot.x += dot.vx;
     dot.y += dot.vy;
 
-    // Bounds
-    if (dot.x < dot.radius) { dot.x = dot.radius; dot.vx *= -0.5; }
-    if (dot.x > canvas.width - dot.radius) { dot.x = canvas.width - dot.radius; dot.vx *= -0.5; }
-    if (dot.y < dot.radius) { dot.y = dot.radius; dot.vy *= -0.5; }
-    if (dot.y > canvas.height - dot.radius) { dot.y = canvas.height - dot.radius; dot.vy *= -0.5; }
+    // Hard Bounds
+    if (dot.x < dot.radius) { dot.x = dot.radius; dot.vx = 0; }
+    if (dot.x > canvas.width - dot.radius) { dot.x = canvas.width - dot.radius; dot.vx = 0; }
+    if (dot.y < dot.radius) { dot.y = dot.radius; dot.vy = 0; }
+    if (dot.y > canvas.height - dot.radius) { dot.y = canvas.height - dot.radius; dot.vy = 0; }
 }
 
 function draw() {
@@ -115,15 +111,16 @@ function draw() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
-    // Draw "Zero Point" indicator
-    ctx.strokeStyle = "rgba(156, 39, 176, 0.4)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(canvas.width/2 - 10, canvas.height/2 - 10, 20, 20);
+    // Target/Safe Zone
+    ctx.strokeStyle = "rgba(0, 150, 136, 0.3)";
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(canvas.width/2 - 40, canvas.height/2 - 40, 80, 80);
+    ctx.setLineDash([]);
 
     // The Ball
-    ctx.shadowColor = "#E91E63";
+    ctx.shadowColor = "#00E676";
     ctx.shadowBlur = 15;
-    ctx.fillStyle = "#E91E63";
+    ctx.fillStyle = "#00E676";
     ctx.beginPath();
     ctx.arc(dot.x, dot.y, dot.radius, 0, Math.PI * 2);
     ctx.fill();
@@ -138,33 +135,31 @@ function loop() {
 loop();
 
 async function startGame() {
-    // 1. Permissions (iOS)
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
         const response = await DeviceMotionEvent.requestPermission();
         if (response !== 'granted') return;
     }
 
-    // 2. Calibration Snapshot
-    // We listen for exactly one event to "set the floor"
-    const captureBaseline = (e) => {
-        const acc = e.accelerationIncludingGravity;
-        baseGX = acc.x;
-        baseGY = acc.y;
-        baseGZ = acc.z;
-        
-        console.log(`Calibrated to: ${baseGX}, ${baseGY}, ${baseGZ}`);
-        
-        // Start the game loop only after calibration
-        startBtn.style.display = "none";
-        gameRunning = true;
-        dot.x = canvas.width / 2;
-        dot.y = canvas.height / 2;
-        document.getElementById('status').textContent = "Calibrated! Tilt to slide.";
-        
-        window.addEventListener("devicemotion", handleMotion);
-    };
+    document.getElementById('status').textContent = "Calibrating in 1s...";
+    startBtn.style.opacity = "0.5";
+    startBtn.disabled = true;
 
-    window.addEventListener("devicemotion", captureBaseline, { once: true });
+    // Wait 1 second so the "tap" motion doesn't ruin the calibration
+    setTimeout(() => {
+        window.addEventListener("devicemotion", (e) => {
+            const acc = e.accelerationIncludingGravity;
+            baseGX = acc.x;
+            baseGY = acc.y;
+            baseGZ = acc.z;
+            
+            startBtn.style.display = "none";
+            gameRunning = true;
+            dot.x = canvas.width / 2;
+            dot.y = canvas.height / 2;
+            document.getElementById('status').textContent = "Running!";
+            window.addEventListener("devicemotion", handleMotion);
+        }, { once: true });
+    }, 1000);
 }
 
 startBtn.addEventListener("click", startGame);
