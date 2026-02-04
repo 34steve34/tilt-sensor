@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Square</title>
+<title>Tilt Test</title>
 
 <style>
 * {
@@ -34,33 +34,44 @@ body {
     border-radius: 12px;
     cursor: pointer;
     z-index: 10;
-    box-shadow: 0 8px 16px rgba(0,0,0,0.5);
 }
-#startBtn:active {
-    transform: translate(-50%, -48%);
-    background: #45a049;
-}
-#score {
+#info {
     position: absolute;
     top: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 28px;
+    left: 16px;
+    font-size: 18px;
     color: white;
+    z-index: 5;
+    line-height: 1.6;
+}
+#version {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    font-size: 14px;
+    color: rgba(255,255,255,0.5);
     z-index: 5;
 }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="score">Time: 0.0s</div>
+<div id="info">
+    Version 2<br>
+    TiltX: <span id="tiltX">0</span><br>
+    TiltY: <span id="tiltY">0</span><br>
+    BaseX: <span id="baseX">0</span><br>
+    BaseY: <span id="baseY">0</span>
+</div>
+<div id="version">v2.0</div>
 <button id="startBtn">START</button>
 
 <script>
+const VERSION = 2;
+
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
-const scoreEl = document.getElementById("score");
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -69,51 +80,29 @@ function resize() {
 resize();
 window.addEventListener("resize", resize);
 
-// Colors for each quadrant/point
-// 0=TL, 1=TR, 2=BL, 3=BR
-const COLORS = [
-    { point: "#FF3333",  quad: "rgba(255, 51,  51,  0.10)" },  // TL - Red
-    { point: "#FFD700",  quad: "rgba(255, 215, 0,   0.10)" },  // TR - Yellow
-    { point: "#00E676",  quad: "rgba(0,   230, 118, 0.10)" },  // BL - Green
-    { point: "#00BFFF",  quad: "rgba(0,   191, 255, 0.10)" }   // BR - Blue
-];
-
 // Game state
 let gameRunning = false;
-let startTime = 0;
-let activeQuadrant = null;
-let gracePeriod = 0;
-let justStarted = false;
-
-// Gravity-based tilt (works in any orientation!)
 let baseGravityX = 0;
 let baseGravityY = 0;
 let tiltX = 0;
 let tiltY = 0;
 
-let points = [];
+// Single dot
+let dot = {
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0
+};
 
-function resetPoints() {
-    points = [
-        { x: canvas.width * 0.3, y: canvas.height * 0.3, vx: 0, vy: 0 },
-        { x: canvas.width * 0.7, y: canvas.height * 0.3, vx: 0, vy: 0 },
-        { x: canvas.width * 0.3, y: canvas.height * 0.7, vx: 0, vy: 0 },
-        { x: canvas.width * 0.7, y: canvas.height * 0.7, vx: 0, vy: 0 }
-    ];
+function resetDot() {
+    dot.x = canvas.width / 2;
+    dot.y = canvas.height / 2;
+    dot.vx = 0;
+    dot.vy = 0;
 }
 
-function randomizePoint(i) {
-    const speed = 0.8 + Math.random() * 0.4;
-    const a = Math.random() * Math.PI * 2;
-    points[i].vx = Math.cos(a) * speed;
-    points[i].vy = Math.sin(a) * speed;
-}
-
-function randomizeAll() {
-    for (let i = 0; i < points.length; i++) randomizePoint(i);
-}
-
-// GRAVITY-BASED tilt handling - works in landscape!
+// GRAVITY-BASED tilt handling
 function handleMotion(e) {
     if (!e.accelerationIncludingGravity) return;
     
@@ -122,89 +111,50 @@ function handleMotion(e) {
     
     if (gx === null || gy === null) return;
     
-    // Calculate relative tilt from baseline (calibrated neutral)
-    // X and Y map directly to screen coordinates in landscape
+    // Calculate relative tilt from baseline
     tiltX = gx - baseGravityX;
     tiltY = gy - baseGravityY;
     
-    // Clamp to reasonable range
-    tiltX = Math.max(-10, Math.min(10, tiltX));
-    tiltY = Math.max(-10, Math.min(10, tiltY));
-}
-
-// Touch controls
-canvas.addEventListener("touchstart", e => {
-    if (!gameRunning) return;
-    if (justStarted) return;
-    e.preventDefault();
-    const t = e.touches[0];
-    const r = canvas.getBoundingClientRect();
-    const x = t.clientX - r.left;
-    const y = t.clientY - r.top;
-
-    const mx = canvas.width / 2;
-    const my = canvas.height / 2;
-
-    if      (x < mx  && y < my)  activeQuadrant = 0;
-    else if (x >= mx && y < my)  activeQuadrant = 1;
-    else if (x < mx  && y >= my) activeQuadrant = 2;
-    else                         activeQuadrant = 3;
-
-    for (let i = 0; i < points.length; i++) {
-        if (i !== activeQuadrant) randomizePoint(i);
-    }
-});
-
-canvas.addEventListener("touchend", () => {
-    activeQuadrant = null;
-});
-
-// Line intersection check
-function linesIntersect(p1, p2, p3, p4) {
-    const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
-    if (d === 0) return false;
-    const u = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / d;
-    const v = ((p3.x - p1.x) * (p2.y - p1.y) - (p3.y - p1.y) * (p2.x - p1.x)) / d;
-    return u > 0 && u < 1 && v > 0 && v < 1;
-}
-
-function squareValid() {
-    if (linesIntersect(points[0], points[1], points[3], points[2])) return false;
-    if (linesIntersect(points[1], points[3], points[2], points[0])) return false;
-    return true;
+    // Update debug display
+    document.getElementById('tiltX').textContent = tiltX.toFixed(2);
+    document.getElementById('tiltY').textContent = tiltY.toFixed(2);
+    document.getElementById('baseX').textContent = baseGravityX.toFixed(2);
+    document.getElementById('baseY').textContent = baseGravityY.toFixed(2);
 }
 
 // Update logic
 function update() {
     if (!gameRunning) return;
 
-    if (gracePeriod > 0) {
-        gracePeriod--;
-    } else if (!squareValid()) {
-        gameRunning = false;
-        alert(`Game Over! Time: ${((Date.now() - startTime)/1000).toFixed(1)}s`);
-        startBtn.style.display = "block";
-        return;
+    // Apply tilt to velocity
+    const angle = Math.atan2(tiltY, tiltX);
+    const mag = Math.hypot(tiltX, tiltY);
+    const speed = Math.min(mag * 0.5, 8);
+    
+    dot.vx = Math.cos(angle) * speed;
+    dot.vy = Math.sin(angle) * speed;
+
+    // Update position
+    dot.x += dot.vx;
+    dot.y += dot.vy;
+
+    // Bounce off walls
+    if (dot.x < 30) {
+        dot.x = 30;
+        dot.vx *= -0.8;
     }
-
-    points.forEach((p, i) => {
-        if (i === activeQuadrant && activeQuadrant !== null) {
-            const angle = Math.atan2(tiltY, tiltX);
-            const mag = Math.hypot(tiltX, tiltY);
-            const speed = Math.min(mag * 0.4, 6);
-            p.vx = Math.cos(angle) * speed;
-            p.vy = Math.sin(angle) * speed;
-        } else {
-            p.vx *= 0.985;
-            p.vy *= 0.985;
-        }
-
-        p.x += p.vx;
-        p.y += p.vy;
-
-        if (p.x < 25 || p.x > canvas.width - 25) p.vx *= -1;
-        if (p.y < 25 || p.y > canvas.height - 25) p.vy *= -1;
-    });
+    if (dot.x > canvas.width - 30) {
+        dot.x = canvas.width - 30;
+        dot.vx *= -0.8;
+    }
+    if (dot.y < 30) {
+        dot.y = 30;
+        dot.vy *= -0.8;
+    }
+    if (dot.y > canvas.height - 30) {
+        dot.y = canvas.height - 30;
+        dot.vy *= -0.8;
+    }
 }
 
 // Draw function
@@ -212,73 +162,36 @@ function draw() {
     ctx.fillStyle = "#0a0a0a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Draw quadrant background colors
-    ctx.fillStyle = COLORS[0].quad;
-    ctx.fillRect(0, 0, canvas.width/2, canvas.height/2);
+    if (!gameRunning) return;
 
-    ctx.fillStyle = COLORS[1].quad;
-    ctx.fillRect(canvas.width/2, 0, canvas.width/2, canvas.height/2);
-
-    ctx.fillStyle = COLORS[2].quad;
-    ctx.fillRect(0, canvas.height/2, canvas.width/2, canvas.height/2);
-
-    ctx.fillStyle = COLORS[3].quad;
-    ctx.fillRect(canvas.width/2, canvas.height/2, canvas.width/2, canvas.height/2);
-
-    // Draw quadrant dividers
-    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    // Draw crosshair at center
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(canvas.width/2, 0);
-    ctx.lineTo(canvas.width/2, canvas.height);
-    ctx.moveTo(0, canvas.height/2);
-    ctx.lineTo(canvas.width, canvas.height/2);
+    ctx.moveTo(canvas.width/2 - 20, canvas.height/2);
+    ctx.lineTo(canvas.width/2 + 20, canvas.height/2);
+    ctx.moveTo(canvas.width/2, canvas.height/2 - 20);
+    ctx.lineTo(canvas.width/2, canvas.height/2 + 20);
     ctx.stroke();
 
-    if (!gameRunning || points.length === 0) return;
-
-    // Brighten active quadrant
-    if (activeQuadrant !== null) {
-        const qx = activeQuadrant % 2 === 0 ? 0 : canvas.width/2;
-        const qy = activeQuadrant < 2 ? 0 : canvas.height/2;
-        ctx.fillStyle = COLORS[activeQuadrant].quad.replace("0.10)", "0.28)");
-        ctx.fillRect(qx, qy, canvas.width/2, canvas.height/2);
+    // Draw velocity vector
+    if (Math.hypot(dot.vx, dot.vy) > 0.5) {
+        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(dot.x, dot.y);
+        ctx.lineTo(dot.x + dot.vx * 10, dot.y + dot.vy * 10);
+        ctx.stroke();
     }
 
-    // Draw edges
-    const edges = [[0,1],[1,3],[3,2],[2,0]];
-    edges.forEach(([a, b]) => {
-        const midX = (points[a].x + points[b].x) / 2;
-        const midY = (points[a].y + points[b].y) / 2;
-
-        ctx.strokeStyle = COLORS[a].point;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(points[a].x, points[a].y);
-        ctx.lineTo(midX, midY);
-        ctx.stroke();
-
-        ctx.strokeStyle = COLORS[b].point;
-        ctx.beginPath();
-        ctx.moveTo(midX, midY);
-        ctx.lineTo(points[b].x, points[b].y);
-        ctx.stroke();
-    });
-
-    // Draw points
-    points.forEach((p, i) => {
-        ctx.shadowColor = COLORS[i].point;
-        ctx.shadowBlur = i === activeQuadrant ? 20 : 10;
-        ctx.fillStyle = COLORS[i].point;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-    });
-
-    if (gameRunning) {
-        scoreEl.textContent = `Time: ${((Date.now()-startTime)/1000).toFixed(1)}s`;
-    }
+    // Draw dot
+    ctx.shadowColor = "#00E676";
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = "#00E676";
+    ctx.beginPath();
+    ctx.arc(dot.x, dot.y, 20, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
 }
 
 function loop() {
@@ -288,40 +201,36 @@ function loop() {
 }
 loop();
 
-// Start game - CALIBRATE GRAVITY
+// Start game
 function startGame(e) {
-    if (e) e.preventDefault();
-    if (e) e.stopPropagation();
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
     if (gameRunning) return;
 
     startBtn.style.display = "none";
     gameRunning = true;
-    gracePeriod = 90;
-    startTime = Date.now();
 
-    justStarted = true;
-    setTimeout(() => { justStarted = false; }, 200);
-
-    resetPoints();
-    randomizeAll();
+    resetDot();
 
     // Reset calibration
     baseGravityX = 0;
     baseGravityY = 0;
 
-    // Calibrate to current gravity as neutral position
+    // Calibrate on first motion event
     function calibrate(ev) {
         if (ev.accelerationIncludingGravity) {
             baseGravityX = ev.accelerationIncludingGravity.x || 0;
             baseGravityY = ev.accelerationIncludingGravity.y || 0;
-            console.log(`Calibrated! Neutral: X=${baseGravityX.toFixed(2)}, Y=${baseGravityY.toFixed(2)}`);
+            console.log(`Version ${VERSION} - Calibrated! X=${baseGravityX.toFixed(2)}, Y=${baseGravityY.toFixed(2)}`);
+            document.getElementById('baseX').textContent = baseGravityX.toFixed(2);
+            document.getElementById('baseY').textContent = baseGravityY.toFixed(2);
         }
     }
 
-    // Calibrate on first motion event, then start listening
     window.addEventListener("devicemotion", calibrate, { once: true });
     
-    // Start continuous motion listening after calibration
     setTimeout(() => {
         window.addEventListener("devicemotion", handleMotion);
     }, 100);
@@ -329,6 +238,8 @@ function startGame(e) {
 
 startBtn.addEventListener("click", startGame);
 startBtn.addEventListener("touchstart", startGame);
+
+console.log(`Tilt Test Version ${VERSION} loaded`);
 </script>
 </body>
 </html>
