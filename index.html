@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v11</title>
+<title>Tilt Test v12</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; }
@@ -14,21 +14,21 @@ body { background: #050b14; overflow: hidden; touch-action: none; font-family: m
     border: none; border-radius: 12px; cursor: pointer; z-index: 10;
 }
 #info { position: absolute; top: 16px; left: 16px; font-size: 14px; color: #4fc3f7; z-index: 5; pointer-events: none; }
-#version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.2); }
+#version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.4); }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="info">
-    Version 11 (Delta Wing)<br>
-    L: <span id="lIn">-</span> | R: <span id="rIn">-</span><br>
-    <span id="status">Hold Landscape & Calibrate</span>
+    Version 12 (Rigid Wing)<br>
+    L-Touch: <span id="lIn">OFF</span> | R-Touch: <span id="rIn">OFF</span><br>
+    <span id="status">Tilt to influence flight</span>
 </div>
-<div id="version">v11.0</div>
+<div id="version">v12.0</div>
 <button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
-const VERSION = 11;
+const VERSION = 12;
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
@@ -39,18 +39,17 @@ let baseGX = 0, baseGY = 0;
 let touchL = false, touchR = false;
 
 const CONFIG = {
-    friction: 0.93,
-    sensX: 0.28,
-    sensY: 0.14,
+    friction: 0.94,
+    sensX: 0.3,
+    sensY: 0.15,
     deadzone: 0.8,
     wingWidth: 120,
-    noseLength: 50
+    noseLength: 55
 };
 
-// Three points of the triangle
 let ballL = { x: 0, y: 0, vx: 0, vy: 0 };
 let ballR = { x: 0, y: 0, vx: 0, vy: 0 };
-let nose = { x: 0, y: 0 }; // Positioned relative to the mid-point
+let nose = { x: 0, y: 0 };
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -66,6 +65,8 @@ function updateTouches(e) {
         if (e.touches[i].clientX < window.innerWidth / 2) touchL = true;
         else touchR = true;
     }
+    document.getElementById("lIn").innerText = touchL ? "HOLD" : "OFF";
+    document.getElementById("rIn").innerText = touchR ? "HOLD" : "OFF";
 }
 window.addEventListener("touchstart", updateTouches);
 window.addEventListener("touchend", updateTouches);
@@ -73,16 +74,9 @@ window.addEventListener("touchend", updateTouches);
 function handleMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc) return;
-    // Map for landscape (Phone held wide)
+    // Landscape orientation mapping
     tiltX = acc.y - baseGY; 
     tiltY = acc.x - baseGX;
-}
-
-function wrap(obj) {
-    if (obj.x < 0) obj.x = canvas.width;
-    if (obj.x > canvas.width) obj.x = 0;
-    if (obj.y < 0) obj.y = canvas.height;
-    if (obj.y > canvas.height) obj.y = 0;
 }
 
 function update() {
@@ -91,13 +85,14 @@ function update() {
     let forceX = Math.abs(tiltX) > CONFIG.deadzone ? tiltX : 0;
     let forceY = Math.abs(tiltY) > CONFIG.deadzone ? tiltY : 0;
 
-    const controlAll = !touchL && !touchR;
-    
-    if (controlAll || touchL) {
+    // INFLUENCE LOGIC: 
+    // If you hold the left side, you are "pinning" or stabilizing that wing, 
+    // so the tilt primarily affects the opposite wing.
+    if (!touchL) {
         ballL.vx += forceX * CONFIG.sensX;
         ballL.vy += forceY * CONFIG.sensY;
     }
-    if (controlAll || touchR) {
+    if (!touchR) {
         ballR.vx += forceX * CONFIG.sensX;
         ballR.vy += forceY * CONFIG.sensY;
     }
@@ -106,63 +101,64 @@ function update() {
     ballL.x += ballL.vx; ballL.y += ballL.vy;
     ballR.x += ballR.vx; ballR.y += ballR.vy;
 
-    // Friction
+    // Apply friction
     ballL.vx *= CONFIG.friction; ballL.vy *= CONFIG.friction;
     ballR.vx *= CONFIG.friction; ballR.vy *= CONFIG.friction;
 
-    // Rigid Constraint (Wing Width)
+    // RIGID CONSTRAINT (The Distance Fix)
     const dx = ballR.x - ballL.x;
     const dy = ballR.y - ballL.y;
     const dist = Math.sqrt(dx*dx + dy*dy);
+    const diff = (CONFIG.wingWidth - dist) / dist;
+    
+    // Adjust both points equally to maintain width
+    ballL.x -= dx * diff * 0.5; ballL.y -= dy * diff * 0.5;
+    ballR.x += dx * diff * 0.5; ballR.y += dy * diff * 0.5;
 
-    // Only constrain if they haven't wrapped (dist check)
-    if (dist < canvas.width / 2 && dist < canvas.height / 2) {
-        const diff = (CONFIG.wingWidth - dist) / dist;
-        ballL.x -= dx * diff * 0.5; ballL.y -= dy * diff * 0.5;
-        ballR.x += dx * diff * 0.5; ballR.y += dy * diff * 0.5;
-    }
-
-    wrap(ballL);
-    wrap(ballR);
-
-    // Update Nose Position (Central and Forward)
+    // GROUP WRAP LOGIC (Center of Mass)
     const midX = (ballL.x + ballR.x) / 2;
     const midY = (ballL.y + ballR.y) / 2;
+    let shiftX = 0; let shiftY = 0;
+
+    if (midX < 0) shiftX = canvas.width;
+    else if (midX > canvas.width) shiftX = -canvas.width;
+    
+    if (midY < 0) shiftY = canvas.height;
+    else if (midY > canvas.height) shiftY = -canvas.height;
+
+    ballL.x += shiftX; ballR.x += shiftX;
+    ballL.y += shiftY; ballR.y += shiftY;
+
+    // Update Nose Position relative to the fixed wings
+    const finalMidX = (ballL.x + ballR.x) / 2;
+    const finalMidY = (ballL.y + ballR.y) / 2;
     const angle = Math.atan2(ballR.y - ballL.y, ballR.x - ballL.x) - Math.PI/2;
     
-    nose.x = midX + Math.cos(angle) * CONFIG.noseLength;
-    nose.y = midY + Math.sin(angle) * CONFIG.noseLength;
+    nose.x = finalMidX + Math.cos(angle) * CONFIG.noseLength;
+    nose.y = finalMidY + Math.sin(angle) * CONFIG.noseLength;
 }
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
-    // Check if balls are too far apart (wrapping) to draw the wing
-    const dx = Math.abs(ballL.x - ballR.x);
-    const dy = Math.abs(ballL.y - ballR.y);
-    const nLx = Math.abs(ballL.x - nose.x);
-    const nLy = Math.abs(ballL.y - nose.y);
-
-    if (dx < canvas.width/2 && dy < canvas.height/2 && nLx < canvas.width/2) {
-        // Draw Triangle Body
-        ctx.fillStyle = "rgba(79, 195, 247, 0.2)";
-        ctx.strokeStyle = "#4fc3f7";
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(ballL.x, ballL.y);
-        ctx.lineTo(ballR.x, ballR.y);
-        ctx.lineTo(nose.x, nose.y);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-    }
+    // Draw Triangle Body
+    ctx.fillStyle = "rgba(79, 195, 247, 0.2)";
+    ctx.strokeStyle = "#4fc3f7";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(ballL.x, ballL.y);
+    ctx.lineTo(ballR.x, ballR.y);
+    ctx.lineTo(nose.x, nose.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
 
     // Draw Engine Dots
-    ctx.fillStyle = touchL ? "#E91E63" : "#4fc3f7";
-    ctx.beginPath(); ctx.arc(ballL.x, ballL.y, 8, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = touchR ? "#E91E63" : "#4fc3f7";
-    ctx.beginPath(); ctx.arc(ballR.x, ballR.y, 8, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = touchL ? "#FF5252" : "#4fc3f7";
+    ctx.beginPath(); ctx.arc(ballL.x, ballL.y, 10, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = touchR ? "#FF5252" : "#4fc3f7";
+    ctx.beginPath(); ctx.arc(ballR.x, ballR.y, 10, 0, Math.PI*2); ctx.fill();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
@@ -173,17 +169,16 @@ async function startGame() {
         const res = await DeviceMotionEvent.requestPermission();
         if (res !== 'granted') return;
     }
-    setTimeout(() => {
-        window.addEventListener("devicemotion", (e) => {
-            baseGX = e.accelerationIncludingGravity.x;
-            baseGY = e.accelerationIncludingGravity.y;
-            startBtn.style.display = "none";
-            gameRunning = true;
-            ballL = { x: canvas.width/2 - 60, y: canvas.height/2 + 30, vx: 0, vy: 0 };
-            ballR = { x: canvas.width/2 + 60, y: canvas.height/2 + 30, vx: 0, vy: 0 };
-            window.addEventListener("devicemotion", handleMotion);
-        }, { once: true });
-    }, 500);
+    startBtn.style.display = "none";
+    
+    window.addEventListener("devicemotion", (e) => {
+        baseGX = e.accelerationIncludingGravity.x;
+        baseGY = e.accelerationIncludingGravity.y;
+        gameRunning = true;
+        ballL = { x: canvas.width/2 - 60, y: canvas.height/2 + 30, vx: 0, vy: 0 };
+        ballR = { x: canvas.width/2 + 60, y: canvas.height/2 + 30, vx: 0, vy: 0 };
+        window.addEventListener("devicemotion", handleMotion);
+    }, { once: true });
 }
 startBtn.addEventListener("click", startGame);
 </script>
