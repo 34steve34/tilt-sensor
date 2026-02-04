@@ -3,15 +3,15 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v12</title>
+<title>Tilt Test v13</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; }
 #gameCanvas { display: block; background: radial-gradient(circle, #0a1628 0%, #050b14 100%); }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    padding: 20px 60px; font-size: 24px; background: #E91E63; color: white;
-    border: none; border-radius: 12px; cursor: pointer; z-index: 10;
+    padding: 20px 60px; font-size: 24px; background: #00E676; color: #050b14;
+    border: none; border-radius: 12px; cursor: pointer; z-index: 10; font-weight: bold;
 }
 #info { position: absolute; top: 16px; left: 16px; font-size: 14px; color: #4fc3f7; z-index: 5; pointer-events: none; }
 #version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.4); }
@@ -20,15 +20,14 @@ body { background: #050b14; overflow: hidden; touch-action: none; font-family: m
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="info">
-    Version 12 (Rigid Wing)<br>
-    L-Touch: <span id="lIn">OFF</span> | R-Touch: <span id="rIn">OFF</span><br>
-    <span id="status">Tilt to influence flight</span>
+    Version 13 (Rotational Control)<br>
+    L: CCW | R: CW<br>
+    <span id="status">Tilt to drift, Tap to rotate</span>
 </div>
-<div id="version">v12.0</div>
-<button id="startBtn">ENGAGE ENGINES</button>
+<div id="version">v13.0</div>
+<button id="startBtn">INITIALIZE PILOT</button>
 
 <script>
-const VERSION = 12;
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
@@ -39,17 +38,21 @@ let baseGX = 0, baseGY = 0;
 let touchL = false, touchR = false;
 
 const CONFIG = {
-    friction: 0.94,
-    sensX: 0.3,
-    sensY: 0.15,
+    friction: 0.92,      // Increased friction (slower glide)
+    sensX: 0.22,        // 20% reduced from v12
+    sensY: 0.12,        // 20% reduced from v12
+    rotationSpeed: 0.06, // Radians per frame
     deadzone: 0.8,
     wingWidth: 120,
     noseLength: 55
 };
 
-let ballL = { x: 0, y: 0, vx: 0, vy: 0 };
-let ballR = { x: 0, y: 0, vx: 0, vy: 0 };
-let nose = { x: 0, y: 0 };
+// Ship State
+let ship = {
+    x: 0, y: 0,
+    vx: 0, vy: 0,
+    angle: -Math.PI / 2 // Facing up
+};
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -65,8 +68,6 @@ function updateTouches(e) {
         if (e.touches[i].clientX < window.innerWidth / 2) touchL = true;
         else touchR = true;
     }
-    document.getElementById("lIn").innerText = touchL ? "HOLD" : "OFF";
-    document.getElementById("rIn").innerText = touchR ? "HOLD" : "OFF";
 }
 window.addEventListener("touchstart", updateTouches);
 window.addEventListener("touchend", updateTouches);
@@ -74,7 +75,6 @@ window.addEventListener("touchend", updateTouches);
 function handleMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc) return;
-    // Landscape orientation mapping
     tiltX = acc.y - baseGY; 
     tiltY = acc.x - baseGX;
 }
@@ -82,83 +82,62 @@ function handleMotion(e) {
 function update() {
     if (!gameRunning) return;
 
+    // 1. Rotation Logic (Simple CCW / CW)
+    if (touchL) ship.angle -= CONFIG.rotationSpeed;
+    if (touchR) ship.angle += CONFIG.rotationSpeed;
+
+    // 2. Translation Logic (Tilt moves the whole craft)
     let forceX = Math.abs(tiltX) > CONFIG.deadzone ? tiltX : 0;
     let forceY = Math.abs(tiltY) > CONFIG.deadzone ? tiltY : 0;
 
-    // INFLUENCE LOGIC: 
-    // If you hold the left side, you are "pinning" or stabilizing that wing, 
-    // so the tilt primarily affects the opposite wing.
-    if (!touchL) {
-        ballL.vx += forceX * CONFIG.sensX;
-        ballL.vy += forceY * CONFIG.sensY;
-    }
-    if (!touchR) {
-        ballR.vx += forceX * CONFIG.sensX;
-        ballR.vy += forceY * CONFIG.sensY;
-    }
+    ship.vx += forceX * CONFIG.sensX;
+    ship.vy += forceY * CONFIG.sensY;
 
-    // Apply movement
-    ballL.x += ballL.vx; ballL.y += ballL.vy;
-    ballR.x += ballR.vx; ballR.y += ballR.vy;
+    // 3. Movement & Friction
+    ship.x += ship.vx;
+    ship.y += ship.vy;
+    ship.vx *= CONFIG.friction;
+    ship.vy *= CONFIG.friction;
 
-    // Apply friction
-    ballL.vx *= CONFIG.friction; ballL.vy *= CONFIG.friction;
-    ballR.vx *= CONFIG.friction; ballR.vy *= CONFIG.friction;
-
-    // RIGID CONSTRAINT (The Distance Fix)
-    const dx = ballR.x - ballL.x;
-    const dy = ballR.y - ballL.y;
-    const dist = Math.sqrt(dx*dx + dy*dy);
-    const diff = (CONFIG.wingWidth - dist) / dist;
+    // 4. Group Wrap
+    if (ship.x < 0) ship.x = canvas.width;
+    else if (ship.x > canvas.width) ship.x = 0;
     
-    // Adjust both points equally to maintain width
-    ballL.x -= dx * diff * 0.5; ballL.y -= dy * diff * 0.5;
-    ballR.x += dx * diff * 0.5; ballR.y += dy * diff * 0.5;
-
-    // GROUP WRAP LOGIC (Center of Mass)
-    const midX = (ballL.x + ballR.x) / 2;
-    const midY = (ballL.y + ballR.y) / 2;
-    let shiftX = 0; let shiftY = 0;
-
-    if (midX < 0) shiftX = canvas.width;
-    else if (midX > canvas.width) shiftX = -canvas.width;
-    
-    if (midY < 0) shiftY = canvas.height;
-    else if (midY > canvas.height) shiftY = -canvas.height;
-
-    ballL.x += shiftX; ballR.x += shiftX;
-    ballL.y += shiftY; ballR.y += shiftY;
-
-    // Update Nose Position relative to the fixed wings
-    const finalMidX = (ballL.x + ballR.x) / 2;
-    const finalMidY = (ballL.y + ballR.y) / 2;
-    const angle = Math.atan2(ballR.y - ballL.y, ballR.x - ballL.x) - Math.PI/2;
-    
-    nose.x = finalMidX + Math.cos(angle) * CONFIG.noseLength;
-    nose.y = finalMidY + Math.sin(angle) * CONFIG.noseLength;
+    if (ship.y < 0) ship.y = canvas.height;
+    else if (ship.y > canvas.height) ship.y = 0;
 }
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
+    // Calculate Wing Tips based on Center (ship.x, ship.y) and Angle
+    // Wing tips are perpendicular to the nose angle
+    const halfWidth = CONFIG.wingWidth / 2;
+    const lX = ship.x + Math.cos(ship.angle - Math.PI/2) * halfWidth;
+    const lY = ship.y + Math.sin(ship.angle - Math.PI/2) * halfWidth;
+    const rX = ship.x + Math.cos(ship.angle + Math.PI/2) * halfWidth;
+    const rY = ship.y + Math.sin(ship.angle + Math.PI/2) * halfWidth;
+    const nX = ship.x + Math.cos(ship.angle) * CONFIG.noseLength;
+    const nY = ship.y + Math.sin(ship.angle) * CONFIG.noseLength;
+
     // Draw Triangle Body
-    ctx.fillStyle = "rgba(79, 195, 247, 0.2)";
-    ctx.strokeStyle = "#4fc3f7";
+    ctx.fillStyle = "rgba(0, 230, 118, 0.15)";
+    ctx.strokeStyle = "#00E676";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(ballL.x, ballL.y);
-    ctx.lineTo(ballR.x, ballR.y);
-    ctx.lineTo(nose.x, nose.y);
+    ctx.moveTo(lX, lY);
+    ctx.lineTo(rX, rY);
+    ctx.lineTo(nX, nY);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
 
-    // Draw Engine Dots
-    ctx.fillStyle = touchL ? "#FF5252" : "#4fc3f7";
-    ctx.beginPath(); ctx.arc(ballL.x, ballL.y, 10, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = touchR ? "#FF5252" : "#4fc3f7";
-    ctx.beginPath(); ctx.arc(ballR.x, ballR.y, 10, 0, Math.PI*2); ctx.fill();
+    // Draw Engine Indicators
+    ctx.fillStyle = touchL ? "#FFF" : "#00E676";
+    ctx.beginPath(); ctx.arc(lX, lY, 8, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = touchR ? "#FFF" : "#00E676";
+    ctx.beginPath(); ctx.arc(rX, rY, 8, 0, Math.PI*2); ctx.fill();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
@@ -175,8 +154,8 @@ async function startGame() {
         baseGX = e.accelerationIncludingGravity.x;
         baseGY = e.accelerationIncludingGravity.y;
         gameRunning = true;
-        ballL = { x: canvas.width/2 - 60, y: canvas.height/2 + 30, vx: 0, vy: 0 };
-        ballR = { x: canvas.width/2 + 60, y: canvas.height/2 + 30, vx: 0, vy: 0 };
+        ship.x = canvas.width / 2;
+        ship.y = canvas.height / 2;
         window.addEventListener("devicemotion", handleMotion);
     }, { once: true });
 }
