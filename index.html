@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v18</title>
+<title>Tilt Test v19</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; color: #4fc3f7; }
@@ -15,42 +15,36 @@ body { background: #050b14; overflow: hidden; touch-action: none; font-family: m
 }
 #info { position: absolute; top: 16px; left: 16px; font-size: 12px; pointer-events: none; }
 #version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.3); }
-#warning { 
-    position: absolute; top: 70%; left: 50%; transform: translate(-50%, -50%);
-    color: #ff5252; font-weight: bold; display: none; text-align: center; width: 80%;
-}
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="info">Pitch: <span id="curPitch">0</span>° | Roll: <span id="curRoll">0</span>°</div>
-<div id="warning">PHONE TOO STEEP!<br>Tilt screen toward you to calibrate.</div>
-<div id="version">v18.0 (Zero-Point Fix)</div>
-<button id="startBtn">CALIBRATE & START</button>
+<div id="info">Symmetrical Calibration Active<br>Center phone and press START</div>
+<div id="version">v19.0 (Symmetrical Hybrid)</div>
+<button id="startBtn">START ENGINES</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
-const warningEl = document.getElementById("warning");
 
 let gameRunning = false;
-let calibrated = false;
 let touchL = false, touchR = false;
+let tiltX = 0, tiltY = 0;
+let baseGX = 0, baseGY = 0;
+let maxRangeY = 2.0; // Default safety range
 
 const CONFIG = {
     rotTorque: 0.002,
     rotFriction: 0.97,
-    driftSens: 2.5, 
+    driftSens: 0.15,      // Back to v16 levels
     driftFriction: 0.95,
-    maxTiltRange: 30 * (Math.PI / 180),
+    deadzone: 0.5,
     wingWidth: 100,
     noseLength: 50
 };
 
 let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI / 2, vAngle: 0 };
-let basePitch = 0, baseRoll = 0;
-let currentPitch = 0, currentRoll = 0;
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -73,18 +67,19 @@ window.addEventListener("touchend", updateTouches);
 function handleMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc) return;
+    
+    // Raw differences
+    let rawDeltaY = acc.y - baseGY;
+    let rawDeltaX = acc.x - baseGX;
 
-    // Pitch: Angle between Y and Z (Forward/Back)
-    currentPitch = Math.atan2(acc.y, acc.z);
-    // Roll: Angle between X and Z (Left/Right)
-    currentRoll = Math.atan2(acc.x, acc.z);
-
-    document.getElementById("curPitch").innerText = Math.round(currentPitch * (180/Math.PI));
-    document.getElementById("curRoll").innerText = Math.round(currentRoll * (180/Math.PI));
+    // SYMMETRICAL CLIPPING
+    // We limit the output to the "maxRangeY" calculated at startup
+    tiltY = Math.max(-maxRangeY, Math.min(maxRangeY, rawDeltaY));
+    tiltX = Math.max(-maxRangeY, Math.min(maxRangeY, rawDeltaX));
 }
 
 function update() {
-    if (!gameRunning || !calibrated) return;
+    if (!gameRunning) return;
 
     // Rotation
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
@@ -92,13 +87,9 @@ function update() {
     ship.angle += ship.vAngle;
     ship.vAngle *= CONFIG.rotFriction;
 
-    // Translation with Zeroed Offsets
-    let pitchDelta = currentPitch - basePitch;
-    let rollDelta = currentRoll - baseRoll;
-    
-    // Normalize to -1 to 1 based on 30 degree range
-    let forceY = Math.max(-1, Math.min(1, pitchDelta / CONFIG.maxTiltRange));
-    let forceX = Math.max(-1, Math.min(1, rollDelta / CONFIG.maxTiltRange));
+    // Translation (Linear but Symmetrical)
+    let forceX = Math.abs(tiltX) > CONFIG.deadzone ? tiltX : 0;
+    let forceY = Math.abs(tiltY) > CONFIG.deadzone ? tiltY : 0;
 
     ship.vx += forceX * CONFIG.driftSens;
     ship.vy += forceY * CONFIG.driftSens;
@@ -107,7 +98,7 @@ function update() {
     ship.vx *= CONFIG.driftFriction;
     ship.vy *= CONFIG.driftFriction;
 
-    // Screen Wrap
+    // Wrap
     if (ship.x < 0) ship.x = canvas.width;
     else if (ship.x > canvas.width) ship.x = 0;
     if (ship.y < 0) ship.y = canvas.height;
@@ -126,7 +117,6 @@ function draw() {
     const nX = ship.x + Math.cos(ship.angle) * CONFIG.noseLength;
     const nY = ship.y + Math.sin(ship.angle) * CONFIG.noseLength;
 
-    // Drawing Logic
     ctx.fillStyle = "rgba(0, 230, 118, 0.2)";
     ctx.strokeStyle = "#00E676";
     ctx.lineWidth = 3;
@@ -135,6 +125,7 @@ function draw() {
     ctx.closePath();
     ctx.fill(); ctx.stroke();
 
+    // Engine Glow (Side specific)
     if (touchL) drawGlow(lX, lY);
     if (touchR) drawGlow(rX, rY);
 }
@@ -155,32 +146,32 @@ async function startGame() {
         if (res !== 'granted') return;
     }
 
-    // Start watching motion immediately for live UI numbers
-    window.addEventListener("devicemotion", handleMotion);
+    window.addEventListener("devicemotion", (e) => {
+        if (!gameRunning) {
+            const gy = e.accelerationIncludingGravity.y;
+            const gx = e.accelerationIncludingGravity.x;
+            
+            baseGY = gy;
+            baseGX = gx;
 
-    startBtn.addEventListener("click", () => {
-        // Validation
-        if (Math.abs(currentPitch * (180/Math.PI)) > 80) {
-            warningEl.style.display = "block";
-            return;
+            // HYBRID CALCULATION:
+            // Find distance to the nearest physical 9.8 or 0 limits
+            const distToUpper = 9.8 - Math.abs(gy);
+            const distToLower = Math.abs(gy);
+            
+            // The "Max Range" is the smaller of the two, ensuring symmetry.
+            // We cap it at 4.0 so it doesn't get too wild.
+            maxRangeY = Math.min(distToUpper, distToLower, 4.0);
+            
+            gameRunning = true;
+            startBtn.style.display = "none";
+            ship.x = canvas.width / 2;
+            ship.y = canvas.height / 2;
         }
-
-        // CALIBRATION LOCK
-        basePitch = currentPitch;
-        baseRoll = currentRoll;
-        
-        // Final state change
-        warningEl.style.display = "none";
-        startBtn.style.display = "none";
-        ship.x = canvas.width / 2;
-        ship.y = canvas.height / 2;
-        ship.vx = 0; ship.vy = 0; // Reset any pre-game drift
-        
-        gameRunning = true;
-        calibrated = true;
-    });
+        handleMotion(e);
+    }, { passive: true });
 }
-startGame();
+startBtn.addEventListener("click", startGame);
 </script>
 </body>
 </html>
