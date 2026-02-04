@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v26</title>
+<title>Trench Run v26.1</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #000; overflow: hidden; touch-action: none; font-family: monospace; color: #00E676; }
@@ -19,7 +19,7 @@ body { background: #000; overflow: hidden; touch-action: none; font-family: mono
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="ui">DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
-<button id="startBtn">START ENGINES</button>
+<button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -31,7 +31,7 @@ let touchL = false, touchR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
 let distance = 0, frameCount = 0;
-let speedMultiplier = 0.1; // Start at 10% speed
+let speedMultiplier = 0.2; // Start a bit faster (20%)
 
 const CONFIG = {
     rotTorque: 0.0016, 
@@ -48,7 +48,7 @@ const CONFIG = {
 
 let ship = { 
     x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0,
-    w: 90, h: 8 // Even wider and shorter
+    w: 90, h: 8 
 };
 
 let gates = []; 
@@ -75,16 +75,30 @@ window.addEventListener("devicemotion", (e) => {
     tiltX = Math.max(-3, Math.min(3, lastAcc.y - baseGX));
 });
 
-function spawnGate() {
-    gates.push({ z: CONFIG.maxZ, cx: pathX, cy: pathY, w: CONFIG.baseW(), h: CONFIG.baseH() });
+function spawnGate(customZ) {
+    gates.push({ 
+        z: customZ || CONFIG.maxZ, 
+        cx: pathX, 
+        cy: pathY, 
+        w: CONFIG.baseW(), 
+        h: CONFIG.baseH() 
+    });
+}
+
+function initTrench() {
+    gates = [];
+    // Spawn gates immediately at intervals so we start "inside"
+    spawnGate(0.5); // Right in front
+    spawnGate(1.5);
+    spawnGate(2.5);
+    spawnGate(3.5);
+    spawnGate(4.5);
 }
 
 function update() {
     if (!gameRunning) return;
     
-    // Ramp up speed over 10 seconds (600 frames at 60fps)
-    if (speedMultiplier < 1.0) speedMultiplier += 0.0015; 
-    
+    if (speedMultiplier < 1.0) speedMultiplier += 0.0012; 
     let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
     distance += currentSpeed * 30;
     frameCount++;
@@ -94,7 +108,7 @@ function update() {
 
     if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
 
-    // Ship Physics
+    // Physics
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
@@ -108,13 +122,13 @@ function update() {
     for (let i = gates.length - 1; i >= 0; i--) {
         gates[i].z -= currentSpeed;
         
-        // COLLISION: If nearest gate is passing the ship
-        if (i === 0 && gates[i].z < 0.2 && gates[i].z > 0) {
+        // COLLISION: Improved Z-trigger (0.2 is the ship's plane)
+        if (i === 0 && gates[i].z < 0.25) {
             const dPct = 1 - (gates[i].z / CONFIG.maxZ);
             const cX = canvas.width/2 + gates[i].cx * dPct;
             const cY = canvas.height/2 + gates[i].cy * dPct;
             
-            // Death happens if ship exits the box bounds
+            // If the gate has passed the ship, check if we were inside
             if (Math.abs(ship.x - cX) > gates[i].w/2 || Math.abs(ship.y - cY) > gates[i].h/2) {
                 gameOver();
             }
@@ -127,8 +141,8 @@ function update() {
 
 function gameOver() {
     gameRunning = false;
-    ctx.fillStyle = "white"; ctx.fillRect(0,0,canvas.width,canvas.height);
-    setTimeout(() => { location.reload(); }, 400);
+    ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(0,0,canvas.width,canvas.height);
+    setTimeout(() => { location.reload(); }, 500);
 }
 
 function draw() {
@@ -148,16 +162,14 @@ function draw() {
         let isNearest = (i === 0);
         let col = (isNearest && g.z < 1.5) ? `255, 255, 255` : `0, 230, 118`;
         
-        ctx.strokeStyle = `rgba(${col}, ${dPct})`;
+        ctx.strokeStyle = `rgba(${col}, ${Math.max(0.1, dPct)})`;
         ctx.lineWidth = (isNearest && g.z < 1.5) ? 4 : 2;
         ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
 
-        // Horizon Crosshair for the nearest gate
+        // Safe-Zone Visual (Ghost Crosshair)
         if (isNearest && g.z < 1.5) {
-            ctx.beginPath();
-            ctx.moveTo(sX - 10, sY); ctx.lineTo(sX + 10, sY);
-            ctx.moveTo(sX, sY - 10); ctx.lineTo(sX, sY + 10);
-            ctx.stroke();
+            ctx.strokeStyle = "rgba(0, 230, 118, 0.5)";
+            ctx.strokeRect(sX - 10, sY - 2, 20, 4); // HUD indicator
         }
 
         if (i < gates.length - 1) {
@@ -167,7 +179,7 @@ function draw() {
             let nX = mx + n.cx * nPct, nY = my + n.cy * nPct;
             let nW = n.w * nScale, nH = n.h * nScale;
 
-            ctx.strokeStyle = (isNearest) ? `rgba(255, 140, 0, 0.4)` : `rgba(255, 140, 0, 0.1)`;
+            ctx.strokeStyle = (isNearest) ? `rgba(255, 140, 0, 0.6)` : `rgba(255, 140, 0, 0.15)`;
             ctx.beginPath();
             ctx.moveTo(sX-sW/2, sY-sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
             ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY-nH/2);
@@ -185,9 +197,9 @@ function draw() {
     ctx.moveTo(20, 0); 
     ctx.lineTo(-10, -ship.w/2); ctx.lineTo(-5, 0); ctx.lineTo(-10, ship.w/2);
     ctx.closePath(); ctx.stroke();
-    // Wing detail
-    ctx.strokeRect(-8, -ship.w/2 + 5, 4, 10);
-    ctx.strokeRect(-8, ship.w/2 - 15, 4, 10);
+    // Engine Glow
+    ctx.fillStyle = "rgba(0, 230, 118, 0.3)";
+    ctx.fillRect(-12, -10, 4, 20);
     ctx.restore();
 }
 
@@ -196,7 +208,12 @@ loop();
 
 startBtn.addEventListener("click", async () => {
     if (typeof DeviceMotionEvent.requestPermission === 'function') await DeviceMotionEvent.requestPermission();
-    if (lastAcc) { baseGY = lastAcc.x; baseGX = lastAcc.y; gameRunning = true; startBtn.style.display = "none"; }
+    if (lastAcc) { 
+        baseGY = lastAcc.x; baseGX = lastAcc.y; 
+        initTrench(); // Populate the corridor BEFORE starting
+        gameRunning = true; 
+        startBtn.style.display = "none"; 
+    }
 });
 </script>
 </body>
