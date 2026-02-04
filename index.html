@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v24</title>
+<title>Trench Run v24.1</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #000; overflow: hidden; touch-action: none; font-family: monospace; color: #00E676; }
 #gameCanvas { display: block; }
-#ui { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 2px 2px #000; }
+#ui { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     padding: 20px 40px; font-size: 20px; background: #00E676; color: #000;
@@ -30,7 +30,8 @@ let gameRunning = false;
 let touchL = false, touchR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
-let distance = 0, level = 1;
+let distance = 0;
+let level = 1;
 
 const CONFIG = {
     rotTorque: 0.0016, 
@@ -38,12 +39,11 @@ const CONFIG = {
     driftFriction: 0.92, 
     rotFriction: 0.97,
     trenchSpeed: 0.015, 
-    curveDrift: 120,      
+    curveDrift: 140,      
     gateFrequency: 10,
-    // THE 30% RULE: We calculate width based on screen size
-    getWallWidth: () => canvas.width * 0.35,
+    getWallWidth: () => canvas.width * 0.35, // 35% Screen Width
     getWallHeight: () => canvas.height * 0.35,
-    fov: 300
+    maxZ: 5.0
 };
 
 let ship = { 
@@ -51,6 +51,7 @@ let ship = {
     angle: -Math.PI/2,
     vAngle: 0, nose: 30, wing: 20 
 };
+
 let gates = []; 
 let pathX = 0, pathY = 0; 
 let frameCount = 0;
@@ -65,6 +66,7 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
+// Input Listeners
 window.addEventListener("touchstart", (e) => {
     if (!gameRunning) return;
     for(let t of e.touches) {
@@ -77,16 +79,17 @@ window.addEventListener("touchend", () => { touchL = false; touchR = false; });
 window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
     if (!gameRunning || !lastAcc) return;
-    // v21.1 Standard
+    // Standardized Axis Mapping
     tiltY = Math.max(-3, Math.min(3, lastAcc.x - baseGY));
     tiltX = Math.max(-3, Math.min(3, lastAcc.y - baseGX));
 });
 
 function spawnGate() {
     gates.push({
-        z: 5.0, 
+        z: CONFIG.maxZ, 
         cx: pathX, cy: pathY,
-        w: CONFIG.getWallWidth(), h: CONFIG.getWallHeight()
+        w: CONFIG.getWallWidth(), 
+        h: CONFIG.getWallHeight()
     });
 }
 
@@ -96,12 +99,13 @@ function update() {
     distance += CONFIG.trenchSpeed * 30;
     frameCount++;
 
+    // Smooth Path Wandering
     pathX = Math.sin(frameCount * 0.02) * CONFIG.curveDrift;
     pathY = Math.cos(frameCount * 0.015) * (CONFIG.curveDrift * 0.5);
 
     if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
 
-    // Flight Physics
+    // Ship Physics
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle;
@@ -112,23 +116,23 @@ function update() {
     ship.x += ship.vx; ship.y += ship.vy;
     ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
 
-    // Constrain ship to screen
+    // Screen Bounds
     ship.x = Math.max(ship.wing, Math.min(canvas.width - ship.wing, ship.x));
     ship.y = Math.max(ship.wing, Math.min(canvas.height - ship.wing, ship.y));
 
-    // Update gates and check for collision
+    // Update Trench & Collision
     for (let i = gates.length - 1; i >= 0; i--) {
         gates[i].z -= CONFIG.trenchSpeed;
         
-        // COLLISION: If the gate is passing the ship's Z-plane
+        // Accurate Collision Check at the Ship's Depth
         if (gates[i].z < 0.2 && gates[i].z > 0) {
-            const sX = canvas.width/2 + gates[i].cx;
-            const sY = canvas.height/2 + gates[i].cy;
-            const sW = gates[i].w;
-            const sH = gates[i].h;
+            const centerX = canvas.width / 2 + gates[i].cx;
+            const centerY = canvas.height / 2 + gates[i].cy;
+            const currentW = gates[i].w;
+            const currentH = gates[i].h;
             
-            // Check if ship center is outside the green frame
-            if (Math.abs(ship.x - sX) > sW/2 || Math.abs(ship.y - sY) > sH/2) {
+            // Check if ship is outside the gate boundaries
+            if (Math.abs(ship.x - centerX) > currentW/2 || Math.abs(ship.y - centerY) > currentH/2) {
                 gameOver();
             }
         }
@@ -140,9 +144,9 @@ function update() {
 
 function gameOver() {
     gameRunning = false;
-    ctx.fillStyle = "rgba(255,0,0,0.5)";
+    ctx.fillStyle = "rgba(255, 0, 0, 0.8)";
     ctx.fillRect(0,0,canvas.width,canvas.height);
-    setTimeout(() => { location.reload(); }, 300);
+    setTimeout(() => { location.reload(); }, 500);
 }
 
 function draw() {
@@ -150,35 +154,38 @@ function draw() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
-    const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2;
+    const midX = canvas.width / 2;
+    const midY = canvas.height / 2;
 
-    // Draw Trench Back-to-Front
+    // Render Trench (Back to Front)
     for (let i = gates.length - 1; i >= 0; i--) {
         let g = gates[i];
-        // PERSPECTIVE MATH: Scale stays 1.0 or less
-        let scale = Math.min(1.0, 0.5 / g.z); 
-        let sW = g.w * scale + (g.w * (1 - g.z/5));
-        let sH = g.h * scale + (g.h * (1 - g.z/5));
         
-        // This keeps the swerve looking the same regardless of distance
-        let sX = centerX + g.cx * (1 - g.z/5);
-        let sY = centerY + g.cy * (1 - g.z/5);
+        // Pure linear depth percentage (0 far, 1 near)
+        let depthPct = 1 - (g.z / CONFIG.maxZ); 
+        
+        // Scale and Position based on depthPct
+        let sW = g.w * (0.2 + depthPct * 0.8);
+        let sH = g.h * (0.2 + depthPct * 0.8);
+        let sX = midX + g.cx * depthPct;
+        let sY = midY + g.cy * depthPct;
 
-        // Frame
-        ctx.strokeStyle = `rgba(0, 230, 118, ${1 - g.z/5})`;
-        ctx.lineWidth = 2;
+        // Draw Rect
+        ctx.strokeStyle = `rgba(0, 230, 118, ${depthPct})`;
+        ctx.lineWidth = 1 + (depthPct * 2);
         ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
 
-        // Connectors
+        // Draw Connectors to previous gate
         if (i < gates.length - 1) {
             let next = gates[i+1];
-            let nX = centerX + next.cx * (1 - next.z/5);
-            let nY = centerY + next.cy * (1 - next.z/5);
-            let nW = next.w * (Math.min(1.0, 0.5 / next.z)) + (next.w * (1 - next.z/5));
-            let nH = next.h * (Math.min(1.0, 0.5 / next.z)) + (next.h * (1 - next.z/5));
+            let nPct = 1 - (next.z / CONFIG.maxZ);
+            let nW = next.w * (0.2 + nPct * 0.8);
+            let nH = next.h * (0.2 + nPct * 0.8);
+            let nX = midX + next.cx * nPct;
+            let nY = midY + next.cy * nPct;
 
-            ctx.strokeStyle = `rgba(255, 140, 0, ${0.3 * (1 - g.z/5)})`;
+            ctx.strokeStyle = `rgba(255, 140, 0, ${depthPct * 0.4})`;
+            ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(sX-sW/2, sY-sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
             ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY-nH/2);
@@ -188,11 +195,12 @@ function draw() {
         }
     }
 
-    // Ship
+    // Render Ship (Fixed orientation)
     ctx.save();
     ctx.translate(ship.x, ship.y);
     ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff";
+    ctx.shadowBlur = 10; ctx.shadowColor = "#00E676";
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(ship.nose, 0); 
