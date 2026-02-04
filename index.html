@@ -57,17 +57,16 @@ body {
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="info">
-    Version 2<br>
+    Version 3<br>
     TiltX: <span id="tiltX">0</span><br>
     TiltY: <span id="tiltY">0</span><br>
-    BaseX: <span id="baseX">0</span><br>
-    BaseY: <span id="baseY">0</span>
+    Orientation: <span id="orient">unknown</span>
 </div>
-<div id="version">v2.0</div>
+<div id="version">v3.0</div>
 <button id="startBtn">START</button>
 
 <script>
-const VERSION = 2;
+const VERSION = 3;
 
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
@@ -84,8 +83,10 @@ window.addEventListener("resize", resize);
 let gameRunning = false;
 let baseGravityX = 0;
 let baseGravityY = 0;
+let baseGravityZ = 0;
 let tiltX = 0;
 let tiltY = 0;
+let orientation = "unknown"; // "port-up", "port-down", "land-left", "land-right"
 
 // Single dot
 let dot = {
@@ -102,24 +103,85 @@ function resetDot() {
     dot.vy = 0;
 }
 
+// Detect orientation based on gravity vector
+function detectOrientation(gx, gy, gz) {
+    const ax = Math.abs(gx);
+    const ay = Math.abs(gy);
+    const az = Math.abs(gz);
+    
+    // Which axis has strongest gravity?
+    if (az > ax && az > ay) {
+        // Z is dominant - phone is flat
+        return gz > 0 ? "flat-up" : "flat-down";
+    } else if (ay > ax) {
+        // Y is dominant - portrait mode
+        return gy > 0 ? "port-down" : "port-up";
+    } else {
+        // X is dominant - landscape mode
+        return gx > 0 ? "land-right" : "land-left";
+    }
+}
+
+// Map gravity to screen tilt based on orientation
+function mapGravityToScreen(gx, gy, gz) {
+    let screenX = 0;
+    let screenY = 0;
+    
+    switch(orientation) {
+        case "land-left":
+            // Charging port on LEFT, top of phone points RIGHT
+            // When you tilt top-down, gravity Y increases (positive)
+            // When you tilt left-right, gravity Z increases
+            screenX = gz - baseGravityZ;  // left/right tilt
+            screenY = gy - baseGravityY;  // forward/back tilt
+            break;
+            
+        case "land-right":
+            // Charging port on RIGHT, top of phone points LEFT
+            screenX = -(gz - baseGravityZ);  // reversed
+            screenY = -(gy - baseGravityY);  // reversed
+            break;
+            
+        case "port-up":
+            // Normal portrait, charging port down
+            screenX = gx - baseGravityX;
+            screenY = gy - baseGravityY;
+            break;
+            
+        case "port-down":
+            // Upside-down portrait
+            screenX = -(gx - baseGravityX);
+            screenY = -(gy - baseGravityY);
+            break;
+            
+        default:
+            // Fallback
+            screenX = gx - baseGravityX;
+            screenY = gy - baseGravityY;
+    }
+    
+    return { x: screenX, y: screenY };
+}
+
 // GRAVITY-BASED tilt handling
 function handleMotion(e) {
     if (!e.accelerationIncludingGravity) return;
     
     const gx = e.accelerationIncludingGravity.x;
     const gy = e.accelerationIncludingGravity.y;
+    const gz = e.accelerationIncludingGravity.z;
     
-    if (gx === null || gy === null) return;
+    if (gx === null || gy === null || gz === null) return;
     
-    // Calculate relative tilt from baseline
-    tiltX = gx - baseGravityX;
-    tiltY = gy - baseGravityY;
+    // Map to screen coordinates
+    const mapped = mapGravityToScreen(gx, gy, gz);
+    tiltX = mapped.x;
+    tiltY = mapped.y;
     
     // Update debug display
     document.getElementById('tiltX').textContent = tiltX.toFixed(2);
     document.getElementById('tiltY').textContent = tiltY.toFixed(2);
-    document.getElementById('baseX').textContent = baseGravityX.toFixed(2);
-    document.getElementById('baseY').textContent = baseGravityY.toFixed(2);
+    document.getElementById('orient').textContent = orientation;
 }
 
 // Update logic
@@ -217,15 +279,28 @@ function startGame(e) {
     // Reset calibration
     baseGravityX = 0;
     baseGravityY = 0;
+    baseGravityZ = 0;
 
     // Calibrate on first motion event
     function calibrate(ev) {
         if (ev.accelerationIncludingGravity) {
-            baseGravityX = ev.accelerationIncludingGravity.x || 0;
-            baseGravityY = ev.accelerationIncludingGravity.y || 0;
-            console.log(`Version ${VERSION} - Calibrated! X=${baseGravityX.toFixed(2)}, Y=${baseGravityY.toFixed(2)}`);
-            document.getElementById('baseX').textContent = baseGravityX.toFixed(2);
-            document.getElementById('baseY').textContent = baseGravityY.toFixed(2);
+            const gx = ev.accelerationIncludingGravity.x || 0;
+            const gy = ev.accelerationIncludingGravity.y || 0;
+            const gz = ev.accelerationIncludingGravity.z || 0;
+            
+            // Detect orientation
+            orientation = detectOrientation(gx, gy, gz);
+            
+            // Set baseline
+            baseGravityX = gx;
+            baseGravityY = gy;
+            baseGravityZ = gz;
+            
+            console.log(`Version ${VERSION} - Calibrated!`);
+            console.log(`Orientation: ${orientation}`);
+            console.log(`Gravity: X=${gx.toFixed(2)}, Y=${gy.toFixed(2)}, Z=${gz.toFixed(2)}`);
+            
+            document.getElementById('orient').textContent = orientation;
         }
     }
 
