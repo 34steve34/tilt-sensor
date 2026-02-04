@@ -3,32 +3,32 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v9</title>
+<title>Tilt Test v10</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #1a1a1a; overflow: hidden; touch-action: none; font-family: monospace; }
-#gameCanvas { display: block; background: #0a0a0a; }
+body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; }
+#gameCanvas { display: block; background: radial-gradient(circle, #0a1628 0%, #050b14 100%); }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    padding: 20px 60px; font-size: 24px; background: #2196F3; color: white;
+    padding: 20px 60px; font-size: 24px; background: #FF9800; color: white;
     border: none; border-radius: 12px; cursor: pointer; z-index: 10;
 }
-#info { position: absolute; top: 16px; left: 16px; font-size: 14px; color: white; z-index: 5; pointer-events: none; }
-#version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.3); }
+#info { position: absolute; top: 16px; left: 16px; font-size: 14px; color: #4fc3f7; z-index: 5; pointer-events: none; }
+#version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.2); }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="info">
-    Version 9 (Glider Prototype)<br>
-    L-Input: <span id="lIn">Off</span> | R-Input: <span id="rIn">Off</span><br>
-    <span id="status">Tap sides to steer</span>
+    Version 10 (Infinite Sky)<br>
+    L: <span id="lIn">-</span> | R: <span id="rIn">-</span><br>
+    <span id="status">Hold Landscape & Calibrate</span>
 </div>
-<div id="version">v9.0</div>
-<button id="startBtn">START GLIDER</button>
+<div id="version">v10.0</div>
+<button id="startBtn">START MISSION</button>
 
 <script>
-const VERSION = 9;
+const VERSION = 10;
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
@@ -36,16 +36,14 @@ const startBtn = document.getElementById("startBtn");
 let gameRunning = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
-
-// Input State
 let touchL = false, touchR = false;
 
-// Physics Config
 const CONFIG = {
-    friction: 0.92,
-    sensitivity: 0.35,
+    friction: 0.94,
+    sensX: 0.28,    // 80% of v9 (0.35 * 0.8)
+    sensY: 0.14,    // 40% of v9 (0.35 * 0.4)
     deadzone: 0.8,
-    linkLength: 150
+    linkLength: 140
 };
 
 let ballL = { x: 0, y: 0, vx: 0, vy: 0 };
@@ -58,31 +56,33 @@ function resize() {
 resize();
 window.addEventListener("resize", resize);
 
-// Input Handling
 function updateTouches(e) {
     if (!gameRunning) return;
-    touchL = false;
-    touchR = false;
+    touchL = false; touchR = false;
     for (let i = 0; i < e.touches.length; i++) {
         if (e.touches[i].clientX < window.innerWidth / 2) touchL = true;
         else touchR = true;
     }
-    document.getElementById('lIn').textContent = touchL ? "Active" : "Off";
-    document.getElementById('rIn').textContent = touchR ? "Active" : "Off";
+    document.getElementById('lIn').textContent = touchL ? "HELD" : "OFF";
+    document.getElementById('rIn').textContent = touchR ? "HELD" : "OFF";
 }
 window.addEventListener("touchstart", updateTouches);
 window.addEventListener("touchend", updateTouches);
-window.addEventListener("touchmove", (e) => e.preventDefault(), {passive: false});
 
 function handleMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc) return;
-    let dx = acc.x - baseGX;
-    let dy = acc.y - baseGY;
-    const rot = window.orientation || 0;
-    if (rot === 0) { tiltX = -dx; tiltY = dy; }
-    else if (rot === 90) { tiltX = dy; tiltY = dx; }
-    else if (rot === -90) { tiltX = -dy; tiltY = -dx; }
+    // Forcing Landscape logic: assumes phone is held wide
+    // Swap axes for landscape: acc.y becomes screen X, acc.x becomes screen Y
+    tiltX = acc.y - baseGY; 
+    tiltY = acc.x - baseGX;
+}
+
+function wrap(obj) {
+    if (obj.x < 0) obj.x = canvas.width;
+    if (obj.x > canvas.width) obj.x = 0;
+    if (obj.y < 0) obj.y = canvas.height;
+    if (obj.y > canvas.height) obj.y = 0;
 }
 
 function update() {
@@ -91,64 +91,72 @@ function update() {
     let forceX = Math.abs(tiltX) > CONFIG.deadzone ? tiltX : 0;
     let forceY = Math.abs(tiltY) > CONFIG.deadzone ? tiltY : 0;
 
-    // Apply forces based on your logic:
-    // If no touch, both move. If one side held, only that side moves.
     const controlAll = !touchL && !touchR;
     
+    // Apply Asymmetric Forces
     if (controlAll || touchL) {
-        ballL.vx += forceX * CONFIG.sensitivity;
-        ballL.vy += forceY * CONFIG.sensitivity;
+        ballL.vx += forceX * CONFIG.sensX;
+        ballL.vy += forceY * CONFIG.sensY;
     }
     if (controlAll || touchR) {
-        ballR.vx += forceX * CONFIG.sensitivity;
-        ballR.vy += forceY * CONFIG.sensitivity;
+        ballR.vx += forceX * CONFIG.sensX;
+        ballR.vy += forceY * CONFIG.sensY;
     }
 
-    // Move
     ballL.x += ballL.vx; ballL.y += ballL.vy;
     ballR.x += ballR.vx; ballR.y += ballR.vy;
 
-    // Apply Friction
     ballL.vx *= CONFIG.friction; ballL.vy *= CONFIG.friction;
     ballR.vx *= CONFIG.friction; ballR.vy *= CONFIG.friction;
 
-    // Constrain distance (Rigid Link)
+    // Constraint Logic
     const dx = ballR.x - ballL.x;
     const dy = ballR.y - ballL.y;
-    const distance = Math.sqrt(dx*dx + dy*dy);
-    const diff = (CONFIG.linkLength - distance) / distance;
-    const offsetX = dx * diff * 0.5;
-    const offsetY = dy * diff * 0.5;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    // Only constrain if they haven't wrapped separately
+    if (dist < CONFIG.linkLength * 1.5) {
+        const diff = (CONFIG.linkLength - dist) / dist;
+        ballL.x -= dx * diff * 0.5; ballL.y -= dy * diff * 0.5;
+        ballR.x += dx * diff * 0.5; ballR.y += dy * diff * 0.5;
+    }
 
-    ballL.x -= offsetX; ballL.y -= offsetY;
-    ballR.x += offsetX; ballR.y += offsetY;
-
-    // Screen Bounds (Simple)
-    [ballL, ballR].forEach(b => {
-        if (b.x < 20) b.x = 20; if (b.x > canvas.width - 20) b.x = canvas.width - 20;
-        if (b.y < 20) b.y = 20; if (b.y > canvas.height - 20) b.y = canvas.height - 20;
-    });
+    wrap(ballL);
+    wrap(ballR);
 }
 
 function draw() {
-    ctx.fillStyle = "#0a0a0a";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
-    // Draw Line
-    ctx.strokeStyle = "white";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(ballL.x, ballL.y);
-    ctx.lineTo(ballR.x, ballR.y);
-    ctx.stroke();
+    // Draw Subtle Grid
+    ctx.strokeStyle = "rgba(79, 195, 247, 0.05)";
+    for(let i=0; i<canvas.width; i+=100) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,canvas.height); ctx.stroke(); }
+    for(let j=0; j<canvas.height; j+=100) { ctx.beginPath(); ctx.moveTo(0,j); ctx.lineTo(canvas.width,j); ctx.stroke(); }
 
-    // Draw Balls
-    ctx.fillStyle = touchL ? "#2196F3" : "#555";
-    ctx.beginPath(); ctx.arc(ballL.x, ballL.y, 15, 0, Math.PI*2); ctx.fill();
+    // Draw Wing Line
+    ctx.strokeStyle = "#4fc3f7";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(ballL.x, ballL.y); ctx.lineTo(ballR.x, ballR.y); ctx.stroke();
+
+    // Draw Nose (Triangle in center)
+    const midX = (ballL.x + ballR.x) / 2;
+    const midY = (ballL.y + ballR.y) / 2;
+    const angle = Math.atan2(ballR.y - ballL.y, ballR.x - ballL.x) - Math.PI/2;
     
-    ctx.fillStyle = touchR ? "#2196F3" : "#555";
-    ctx.beginPath(); ctx.arc(ballR.x, ballR.y, 15, 0, Math.PI*2); ctx.fill();
+    ctx.save();
+    ctx.translate(midX, midY);
+    ctx.rotate(angle);
+    ctx.fillStyle = "#FFF";
+    ctx.beginPath();
+    ctx.moveTo(0, -20); ctx.lineTo(-10, 10); ctx.lineTo(10, 10);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    // Draw Endpoints
+    ctx.fillStyle = touchL ? "#FF9800" : "#4fc3f7";
+    ctx.beginPath(); ctx.arc(ballL.x, ballL.y, 10, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = touchR ? "#FF9800" : "#4fc3f7";
+    ctx.beginPath(); ctx.arc(ballR.x, ballR.y, 10, 0, Math.PI*2); ctx.fill();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
@@ -159,17 +167,18 @@ async function startGame() {
         const res = await DeviceMotionEvent.requestPermission();
         if (res !== 'granted') return;
     }
+    document.getElementById('status').textContent = "Wait for steady...";
     setTimeout(() => {
         window.addEventListener("devicemotion", (e) => {
             baseGX = e.accelerationIncludingGravity.x;
             baseGY = e.accelerationIncludingGravity.y;
             startBtn.style.display = "none";
             gameRunning = true;
-            ballL = { x: canvas.width/2 - 75, y: canvas.height/2, vx: 0, vy: 0 };
-            ballR = { x: canvas.width/2 + 75, y: canvas.height/2, vx: 0, vy: 0 };
+            ballL = { x: canvas.width/2 - 70, y: canvas.height/2, vx: 0, vy: 0 };
+            ballR = { x: canvas.width/2 + 70, y: canvas.height/2, vx: 0, vy: 0 };
             window.addEventListener("devicemotion", handleMotion);
         }, { once: true });
-    }, 500);
+    }, 800);
 }
 startBtn.addEventListener("click", startGame);
 </script>
