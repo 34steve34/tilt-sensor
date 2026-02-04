@@ -3,15 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v4</title>
-
+<title>Tilt Test v5</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #1a1a1a; overflow: hidden; touch-action: none; font-family: monospace; }
 #gameCanvas { display: block; background: #0a0a0a; }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    padding: 20px 60px; font-size: 32px; background: #4CAF50; color: white;
+    padding: 20px 60px; font-size: 32px; background: #2196F3; color: white;
     border: none; border-radius: 12px; cursor: pointer; z-index: 10;
 }
 #info { position: absolute; top: 16px; left: 16px; font-size: 18px; color: white; z-index: 5; line-height: 1.6; }
@@ -21,17 +20,16 @@ body { background: #1a1a1a; overflow: hidden; touch-action: none; font-family: m
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="info">
-    Version 4<br>
-    TiltX: <span id="tiltX">0</span><br>
-    TiltY: <span id="tiltY">0</span><br>
-    Orient: <span id="orient">detecting...</span>
+    Version 5 (Impulse Mode)<br>
+    SnapX: <span id="tiltX">0</span><br>
+    SnapY: <span id="tiltY">0</span><br>
+    Status: <span id="status">Waiting for snap...</span>
 </div>
-<div id="version">v4.0</div>
+<div id="version">v5.0</div>
 <button id="startBtn">START</button>
 
 <script>
-const VERSION = 4;
-
+const VERSION = 5;
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
@@ -44,16 +42,12 @@ resize();
 window.addEventListener("resize", resize);
 
 let gameRunning = false;
-let tiltX = 0;
-let tiltY = 0;
-
-// Dot physics
 let dot = {
     x: 0, y: 0,
     vx: 0, vy: 0,
     radius: 20,
-    friction: 0.98,
-    gravityMulti: 0.25 // Sensitivity
+    friction: 0.92, // Higher friction so it stops quickly
+    sensitivity: 1.5 // Multiplier for the "snap" force
 };
 
 function resetDot() {
@@ -64,90 +58,67 @@ function resetDot() {
 }
 
 function handleMotion(e) {
-    if (!e.accelerationIncludingGravity) return;
-    
-    // In mobile browsers:
-    // x: + left, y: + bottom-to-top, z: + skyward
-    // We invert them so the ball "falls" toward the tilt.
-    let accelX = e.accelerationIncludingGravity.x;
-    let accelY = e.accelerationIncludingGravity.y;
+    // We use 'acceleration' which EXCLUDES gravity.
+    // This captures only the user's manual movement.
+    const acc = e.acceleration;
+    if (!acc || acc.x === null) return;
 
-    // Detect screen orientation (landscape vs portrait)
-    // window.orientation is deprecated but still the most reliable for simple games
-    const rotation = window.orientation || 0;
+    // We invert the axes so a physical move "Left" 
+    // pushes the ball "Left" on the screen.
+    let impulseX = -acc.x;
+    let impulseY = acc.y;
 
-    if (rotation === 0) {
-        // Portrait: X is left/right, Y is up/down
-        tiltX = -accelX;
-        tiltY = accelY;
-    } else if (rotation === 90) {
-        // Landscape (left): Y is left/right, X is up/down
-        tiltX = accelY;
-        tiltY = accelX;
-    } else if (rotation === -90) {
-        // Landscape (right): Y is left/right, X is up/down
-        tiltX = -accelY;
-        tiltY = -accelX;
-    } else if (rotation === 180) {
-        // Upside down
-        tiltX = accelX;
-        tiltY = -accelY;
+    // Threshold: Ignore micro-jitters to keep ball stationary
+    const threshold = 0.5;
+    if (Math.abs(impulseX) > threshold) {
+        dot.vx += impulseX * dot.sensitivity;
+    }
+    if (Math.abs(impulseY) > threshold) {
+        dot.vy += impulseY * dot.sensitivity;
     }
 
-    document.getElementById('tiltX').textContent = tiltX.toFixed(2);
-    document.getElementById('tiltY').textContent = tiltY.toFixed(2);
-    document.getElementById('orient').textContent = rotation + "deg";
+    document.getElementById('tiltX').textContent = impulseX.toFixed(2);
+    document.getElementById('tiltY').textContent = impulseY.toFixed(2);
 }
 
 function update() {
     if (!gameRunning) return;
 
-    // Apply tilt as ACCELERATION (adding to velocity)
-    dot.vx += tiltX * dot.gravityMulti;
-    dot.vy += tiltY * dot.gravityMulti;
-
-    // Apply friction (so it doesn't slide forever)
+    // Apply high friction to slow the ball down rapidly
     dot.vx *= dot.friction;
     dot.vy *= dot.friction;
 
-    // Update position
+    // Stop completely if moving very slowly
+    if (Math.abs(dot.vx) < 0.1) dot.vx = 0;
+    if (Math.abs(dot.vy) < 0.1) dot.vy = 0;
+
     dot.x += dot.vx;
     dot.y += dot.vy;
 
-    // Wall Collisions
-    if (dot.x < dot.radius) {
-        dot.x = dot.radius;
-        dot.vx *= -0.5; // Bounce
-    } else if (dot.x > canvas.width - dot.radius) {
-        dot.x = canvas.width - dot.radius;
-        dot.vx *= -0.5;
-    }
-
-    if (dot.y < dot.radius) {
-        dot.y = dot.radius;
-        dot.vy *= -0.5;
-    } else if (dot.y > canvas.height - dot.radius) {
-        dot.y = canvas.height - dot.radius;
-        dot.vy *= -0.5;
-    }
+    // Bounds
+    if (dot.x < dot.radius) { dot.x = dot.radius; dot.vx *= -0.3; }
+    if (dot.x > canvas.width - dot.radius) { dot.x = canvas.width - dot.radius; dot.vx *= -0.3; }
+    if (dot.y < dot.radius) { dot.y = dot.radius; dot.vy *= -0.3; }
+    if (dot.y > canvas.height - dot.radius) { dot.y = canvas.height - dot.radius; dot.vy *= -0.3; }
 }
 
 function draw() {
     ctx.fillStyle = "#0a0a0a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-
     if (!gameRunning) return;
 
-    // Draw Target/Center
-    ctx.strokeStyle = "rgba(255,255,255,0.1)";
+    // Draw "Grip" Visual (Center point)
+    ctx.strokeStyle = "rgba(33, 150, 243, 0.2)";
+    ctx.setLineDash([5, 5]);
     ctx.beginPath();
-    ctx.arc(canvas.width/2, canvas.height/2, 50, 0, Math.PI*2);
+    ctx.arc(canvas.width/2, canvas.height/2, 40, 0, Math.PI*2);
     ctx.stroke();
+    ctx.setLineDash([]);
 
     // Draw dot
-    ctx.shadowColor = "#00E676";
+    ctx.shadowColor = "#2196F3";
     ctx.shadowBlur = 15;
-    ctx.fillStyle = "#00E676";
+    ctx.fillStyle = "#2196F3";
     ctx.beginPath();
     ctx.arc(dot.x, dot.y, dot.radius, 0, Math.PI * 2);
     ctx.fill();
@@ -162,23 +133,15 @@ function loop() {
 loop();
 
 async function startGame() {
-    // Request permission for iOS 13+
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        try {
-            const response = await DeviceMotionEvent.requestPermission();
-            if (response !== 'granted') {
-                alert("Permission denied");
-                return;
-            }
-        } catch (e) {
-            console.error(e);
-        }
+        const response = await DeviceMotionEvent.requestPermission();
+        if (response !== 'granted') return;
     }
-
     startBtn.style.display = "none";
     gameRunning = true;
     resetDot();
     window.addEventListener("devicemotion", handleMotion);
+    document.getElementById('status').textContent = "Active - Snap the phone!";
 }
 
 startBtn.addEventListener("click", startGame);
