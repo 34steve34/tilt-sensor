@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v23.1</title>
+<title>Trench Run v24</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #000; overflow: hidden; touch-action: none; font-family: monospace; color: #00E676; }
@@ -34,15 +34,16 @@ let distance = 0, level = 1;
 
 const CONFIG = {
     rotTorque: 0.0016, 
-    driftSens: 0.12,      // Snappier movement
+    driftSens: 0.12,      
     driftFriction: 0.92, 
     rotFriction: 0.97,
     trenchSpeed: 0.015, 
-    curveDrift: 150,      // Max pixels the tunnel can swerve
-    gateFrequency: 8,
-    baseWidth: 220,       // Narrower for difficulty
-    baseHeight: 180,      // Narrower for difficulty
-    fov: 350
+    curveDrift: 120,      
+    gateFrequency: 10,
+    // THE 30% RULE: We calculate width based on screen size
+    getWallWidth: () => canvas.width * 0.35,
+    getWallHeight: () => canvas.height * 0.35,
+    fov: 300
 };
 
 let ship = { 
@@ -76,6 +77,7 @@ window.addEventListener("touchend", () => { touchL = false; touchR = false; });
 window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
     if (!gameRunning || !lastAcc) return;
+    // v21.1 Standard
     tiltY = Math.max(-3, Math.min(3, lastAcc.x - baseGY));
     tiltX = Math.max(-3, Math.min(3, lastAcc.y - baseGX));
 });
@@ -84,7 +86,7 @@ function spawnGate() {
     gates.push({
         z: 5.0, 
         cx: pathX, cy: pathY,
-        w: CONFIG.baseWidth, h: CONFIG.baseHeight
+        w: CONFIG.getWallWidth(), h: CONFIG.getWallHeight()
     });
 }
 
@@ -94,9 +96,8 @@ function update() {
     distance += CONFIG.trenchSpeed * 30;
     frameCount++;
 
-    // Swerve logic constrained to 30% of screen center
     pathX = Math.sin(frameCount * 0.02) * CONFIG.curveDrift;
-    pathY = Math.cos(frameCount * 0.015) * (CONFIG.curveDrift * 0.6);
+    pathY = Math.cos(frameCount * 0.015) * (CONFIG.curveDrift * 0.5);
 
     if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
 
@@ -111,22 +112,22 @@ function update() {
     ship.x += ship.vx; ship.y += ship.vy;
     ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
 
-    // Hard screen clamping
+    // Constrain ship to screen
     ship.x = Math.max(ship.wing, Math.min(canvas.width - ship.wing, ship.x));
     ship.y = Math.max(ship.wing, Math.min(canvas.height - ship.wing, ship.y));
 
-    // Collision Detection (at Z=0.1)
+    // Update gates and check for collision
     for (let i = gates.length - 1; i >= 0; i--) {
         gates[i].z -= CONFIG.trenchSpeed;
         
-        if (gates[i].z < 0.15 && gates[i].z > 0.05) {
-            const scale = CONFIG.fov / gates[i].z;
-            const sX = canvas.width/2 + (gates[i].cx);
-            const sY = canvas.height/2 + (gates[i].cy);
-            const sW = gates[i].w * (scale / 100);
-            const sH = gates[i].h * (scale / 100);
+        // COLLISION: If the gate is passing the ship's Z-plane
+        if (gates[i].z < 0.2 && gates[i].z > 0) {
+            const sX = canvas.width/2 + gates[i].cx;
+            const sY = canvas.height/2 + gates[i].cy;
+            const sW = gates[i].w;
+            const sH = gates[i].h;
             
-            // Check Hitbox (Nose and Wings)
+            // Check if ship center is outside the green frame
             if (Math.abs(ship.x - sX) > sW/2 || Math.abs(ship.y - sY) > sH/2) {
                 gameOver();
             }
@@ -139,9 +140,9 @@ function update() {
 
 function gameOver() {
     gameRunning = false;
-    ctx.fillStyle = "red";
+    ctx.fillStyle = "rgba(255,0,0,0.5)";
     ctx.fillRect(0,0,canvas.width,canvas.height);
-    setTimeout(() => { location.reload(); }, 500);
+    setTimeout(() => { location.reload(); }, 300);
 }
 
 function draw() {
@@ -155,32 +156,34 @@ function draw() {
     // Draw Trench Back-to-Front
     for (let i = gates.length - 1; i >= 0; i--) {
         let g = gates[i];
-        let scale = CONFIG.fov / g.z;
-        let sW = g.w * (scale / 100);
-        let sH = g.h * (scale / 100);
-        let sX = centerX + g.cx; 
-        let sY = centerY + g.cy;
+        // PERSPECTIVE MATH: Scale stays 1.0 or less
+        let scale = Math.min(1.0, 0.5 / g.z); 
+        let sW = g.w * scale + (g.w * (1 - g.z/5));
+        let sH = g.h * scale + (g.h * (1 - g.z/5));
+        
+        // This keeps the swerve looking the same regardless of distance
+        let sX = centerX + g.cx * (1 - g.z/5);
+        let sY = centerY + g.cy * (1 - g.z/5);
 
-        // Draw Walls
+        // Frame
         ctx.strokeStyle = `rgba(0, 230, 118, ${1 - g.z/5})`;
-        ctx.lineWidth = 1 + (1/g.z);
+        ctx.lineWidth = 2;
         ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
 
-        // Orange Perspective Lines
+        // Connectors
         if (i < gates.length - 1) {
             let next = gates[i+1];
-            let nScale = CONFIG.fov / next.z;
-            let nX = centerX + next.cx;
-            let nY = centerY + next.cy;
-            let nW = next.w * (nScale / 100);
-            let nH = next.h * (nScale / 100);
+            let nX = centerX + next.cx * (1 - next.z/5);
+            let nY = centerY + next.cy * (1 - next.z/5);
+            let nW = next.w * (Math.min(1.0, 0.5 / next.z)) + (next.w * (1 - next.z/5));
+            let nH = next.h * (Math.min(1.0, 0.5 / next.z)) + (next.h * (1 - next.z/5));
 
-            ctx.strokeStyle = `rgba(255, 140, 0, ${0.4 * (1 - g.z/5)})`;
+            ctx.strokeStyle = `rgba(255, 140, 0, ${0.3 * (1 - g.z/5)})`;
             ctx.beginPath();
             ctx.moveTo(sX-sW/2, sY-sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
-            ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY+nH/2); // Fixed index error
-            ctx.moveTo(sX-sW/2, sY+sH/2); ctx.lineTo(nX-nW/2, nY+nH/2);
             ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY-nH/2);
+            ctx.moveTo(sX-sW/2, sY+sH/2); ctx.lineTo(nX-nW/2, nY+nH/2);
+            ctx.moveTo(sX+sW/2, sY+sH/2); ctx.lineTo(nX+nW/2, nY+nH/2);
             ctx.stroke();
         }
     }
@@ -190,7 +193,6 @@ function draw() {
     ctx.translate(ship.x, ship.y);
     ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff";
-    ctx.shadowBlur = 10; ctx.shadowColor = "#00E676";
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(ship.nose, 0); 
