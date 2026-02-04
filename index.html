@@ -3,23 +3,23 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v21.1</title>
+<title>Trench Run v22</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; color: #00E676; }
-#gameCanvas { display: block; background: radial-gradient(circle, #0a1628 0%, #050b14 100%); }
+body { background: #000; overflow: hidden; touch-action: none; font-family: monospace; color: #00E676; }
+#gameCanvas { display: block; }
+#ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
 #startBtn {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    padding: 20px 40px; font-size: 20px; background: #00E676; color: #050b14;
+    padding: 20px 40px; font-size: 20px; background: #00E676; color: #000;
     border: none; border-radius: 12px; cursor: pointer; z-index: 100; font-weight: bold;
 }
-#version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.3); }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="version">v21.1 (Parallel Fix)</div>
-<button id="startBtn">START ENGINES</button>
+<div id="ui">DIST: <span id="dist">0</span>m | LVL: <span id="lvl">1</span></div>
+<button id="startBtn">START TRENCH RUN</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -30,135 +30,170 @@ let gameRunning = false;
 let touchL = false, touchR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
-let maxRange = 3.0; // Solid default for ~35 degrees of throw
+let distance = 0;
+let level = 1;
 
 const CONFIG = {
-    rotTorque: 0.0016,    
-    rotFriction: 0.97,    
-    driftSens: 0.088,     
-    driftFriction: 0.95,  
-    deadzone: 0.4,
-    wingWidth: 100,
-    noseLength: 50
+    rotTorque: 0.0016, driftSens: 0.088, driftFriction: 0.95, rotFriction: 0.97,
+    trenchSpeed: 0.015, curveDrift: 0.5, gateFrequency: 8
 };
 
-let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI / 2, vAngle: 0 };
+let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, vAngle: 0, size: 40 };
+let gates = []; // The corridor frames
+let pathX = 0, pathY = 0; // The moving center of the "tunnel"
+let frameCount = 0;
 let lastAcc = null;
 
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
+    ship.x = canvas.width / 2;
+    ship.y = canvas.height / 2;
 }
 window.addEventListener("resize", resize);
 resize();
 
-function updateTouches(e) {
+// 1. INPUT HANDLING
+window.addEventListener("touchstart", (e) => {
     if (!gameRunning) return;
-    touchL = false; touchR = false;
-    for (let i = 0; i < e.touches.length; i++) {
-        if (e.touches[i].clientX < window.innerWidth / 2) touchL = true;
+    for(let t of e.touches) {
+        if(t.clientX < canvas.width/2) touchL = true;
         else touchR = true;
     }
-}
-window.addEventListener("touchstart", updateTouches);
-window.addEventListener("touchend", updateTouches);
+});
+window.addEventListener("touchend", () => { touchL = false; touchR = false; });
 
 window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
     if (!gameRunning || !lastAcc) return;
-    
-    // Y is forward/back, X is left/right
-    let rawY = lastAcc.x; 
-    let rawX = lastAcc.y; 
-
-    // Calculate delta and clamp to maxRange
-    tiltY = Math.max(-maxRange, Math.min(maxRange, rawY - baseGY));
-    tiltX = Math.max(-maxRange, Math.min(maxRange, rawX - baseGX));
+    // v21.1 Mapping
+    tiltY = Math.max(-3, Math.min(3, lastAcc.x - baseGY));
+    tiltX = Math.max(-3, Math.min(3, lastAcc.y - baseGX));
 });
 
+// 2. GENERATE THE CORRIDOR
+function spawnGate() {
+    gates.push({
+        z: 1.5, // Start far away (Z depth)
+        cx: pathX, cy: pathY, // The center point when this gate was born
+        w: 600, h: 400
+    });
+}
+
+// 3. CORE LOOP
 function update() {
     if (!gameRunning) return;
 
+    distance += CONFIG.trenchSpeed * 10;
+    frameCount++;
+
+    // Shift path curvature
+    pathX += Math.sin(frameCount * 0.02) * CONFIG.curveDrift;
+    pathY += Math.cos(frameCount * 0.015) * CONFIG.curveDrift;
+
+    // Spawn new gates periodically
+    if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
+
+    // Ship Rotation
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle;
     ship.vAngle *= CONFIG.rotFriction;
 
-    let fX = (Math.abs(tiltX) > CONFIG.deadzone) ? tiltX : 0;
-    let fY = (Math.abs(tiltY) > CONFIG.deadzone) ? tiltY : 0;
-
-    ship.vx += fX * CONFIG.driftSens;
-    ship.vy += fY * CONFIG.driftSens;
+    // Ship Translation
+    ship.vx += tiltX * CONFIG.driftSens;
+    ship.vy += tiltY * CONFIG.driftSens;
     ship.x += ship.vx; ship.y += ship.vy;
     ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
 
-    if (ship.x < 0) ship.x = canvas.width;
-    else if (ship.x > canvas.width) ship.x = 0;
-    if (ship.y < 0) ship.y = canvas.height;
-    else if (ship.y > canvas.height) ship.y = 0;
+    // Constrain ship to screen (for now, until we add wall collisions)
+    ship.x = Math.max(50, Math.min(canvas.width - 50, ship.x));
+    ship.y = Math.max(50, Math.min(canvas.height - 50, ship.y));
+
+    // Update Gate depths
+    for (let i = gates.length - 1; i >= 0; i--) {
+        gates[i].z -= CONFIG.trenchSpeed;
+        if (gates[i].z <= 0) gates.splice(i, 1);
+    }
+
+    // Level up difficulty
+    if (Math.floor(distance / 2000) > level) {
+        level++;
+        CONFIG.trenchSpeed += 0.002;
+        CONFIG.curveDrift += 0.2;
+    }
+
+    document.getElementById("dist").innerText = Math.floor(distance);
+    document.getElementById("lvl").innerText = level;
 }
 
 function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
-    const hw = CONFIG.wingWidth / 2;
-    const lX = ship.x + Math.cos(ship.angle - Math.PI/2) * hw;
-    const lY = ship.y + Math.sin(ship.angle - Math.PI/2) * hw;
-    const rX = ship.x + Math.cos(ship.angle + Math.PI/2) * hw;
-    const rY = ship.y + Math.sin(ship.angle + Math.PI/2) * hw;
-    const nX = ship.x + Math.cos(ship.angle) * CONFIG.noseLength;
-    const nY = ship.y + Math.sin(ship.angle) * CONFIG.noseLength;
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
 
-    ctx.fillStyle = "rgba(0, 230, 118, 0.2)";
-    ctx.strokeStyle = "#00E676";
+    // Draw Trench Gates
+    ctx.lineWidth = 2;
+    for (let i = 0; i < gates.length; i++) {
+        let g = gates[i];
+        let scale = 1 / g.z;
+        let screenW = g.w * scale;
+        let screenH = g.h * scale;
+        let screenX = centerX + (g.cx * scale);
+        let screenY = centerY + (g.cy * scale);
+
+        // Neon Glow effect
+        ctx.strokeStyle = `rgba(0, 230, 118, ${1 - g.z/1.5})`;
+        ctx.strokeRect(screenX - screenW/2, screenY - screenH/2, screenW, screenH);
+
+        // Draw connecting vertices to the next gate
+        if (i > 0) {
+            let prev = gates[i-1];
+            let pScale = 1 / prev.z;
+            let pX = centerX + (prev.cx * pScale);
+            let pY = centerY + (prev.cy * pScale);
+            let pW = prev.w * pScale;
+            let pH = prev.h * pScale;
+
+            ctx.strokeStyle = `rgba(255, 165, 0, ${0.2 * (1 - g.z/1.5)})`; // Orange vertices
+            ctx.beginPath();
+            // Connect 4 corners
+            ctx.moveTo(screenX - screenW/2, screenY - screenH/2); ctx.lineTo(pX - pW/2, pY - pH/2);
+            ctx.moveTo(screenX + screenW/2, screenY - screenH/2); ctx.lineTo(pX + pW/2, pY - pH/2);
+            ctx.moveTo(screenX - screenW/2, screenY + screenH/2); ctx.lineTo(pX - pW/2, pY + pH/2);
+            ctx.moveTo(screenX + screenW/2, screenY + screenH/2); ctx.lineTo(pX + pW/2, pY + pH/2);
+            ctx.stroke();
+        }
+    }
+
+    // Draw Ship
+    ctx.save();
+    ctx.translate(ship.x, ship.y);
+    ctx.rotate(ship.angle);
+    ctx.strokeStyle = "#FFF";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(lX, lY); ctx.lineTo(rX, rY); ctx.lineTo(nX, nY);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-
-    if (touchL) drawGlow(lX, lY);
-    if (touchR) drawGlow(rX, rY);
-}
-
-function drawGlow(x, y) {
-    ctx.save();
-    ctx.shadowBlur = 15; ctx.shadowColor = "#FFF"; ctx.fillStyle = "#FFF";
-    ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI*2); ctx.fill();
+    ctx.moveTo(30, 0); ctx.lineTo(-15, -20); ctx.lineTo(-15, 20); ctx.closePath();
+    ctx.stroke();
     ctx.restore();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
 loop();
 
-async function start() {
+startBtn.addEventListener("click", async () => {
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        const res = await DeviceMotionEvent.requestPermission();
-        if (res !== 'granted') return;
+        await DeviceMotionEvent.requestPermission();
     }
-
     if (lastAcc) {
-        // Lock current position
-        baseGY = lastAcc.x; 
-        baseGX = lastAcc.y;
-
-        // ONLY warn if they are holding it on its razor edge (vertical)
-        // Because that's where the sensors flip and get weird.
-        if (Math.abs(baseGY) > 9.0) {
-            alert("Hold the phone naturally (flat or angled) to start!");
-            return;
-        }
-
+        baseGY = lastAcc.x; baseGX = lastAcc.y;
         gameRunning = true;
         startBtn.style.display = "none";
-        ship.x = canvas.width / 2;
-        ship.y = canvas.height / 2;
-        ship.vx = 0; ship.vy = 0;
-    } else {
-        startBtn.innerText = "WAITING FOR SENSORS...";
     }
-}
-startBtn.addEventListener("click", start);
+});
 </script>
 </body>
 </html>
