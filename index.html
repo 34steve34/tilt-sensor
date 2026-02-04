@@ -3,60 +3,25 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Tilt Test v15 - Tuning Lab</title>
+<title>Tilt Test v16</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #050b14; overflow: hidden; touch-action: none; font-family: monospace; }
 #gameCanvas { display: block; background: radial-gradient(circle, #0a1628 0%, #050b14 100%); }
-
-/* Start Button */
 #startBtn {
-    position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     padding: 20px 60px; font-size: 24px; background: #00E676; color: #050b14;
     border: none; border-radius: 12px; cursor: pointer; z-index: 100; font-weight: bold;
 }
-
-/* Settings Tray */
-#ui-root {
-    position: absolute; bottom: 0; left: 0; width: 100%; 
-    background: rgba(10, 22, 40, 0.9); border-top: 2px solid #4fc3f7;
-    padding: 15px; color: #4fc3f7; z-index: 50; transition: transform 0.3s;
-}
-.control-group { margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
-label { font-size: 11px; width: 40%; }
-input[type=range] { width: 50%; }
-.val-display { width: 10%; font-size: 11px; text-align: right; color: #fff; }
-
-#version { position: absolute; top: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.4); }
+#info { position: absolute; top: 16px; left: 16px; font-size: 12px; color: #4fc3f7; pointer-events: none; }
+#version { position: absolute; bottom: 16px; right: 16px; font-size: 12px; color: rgba(255,255,255,0.3); }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="version">v15.0 (Tuning Lab)</div>
-<button id="startBtn">START TUNING</button>
-
-<div id="ui-root">
-    <div class="control-group">
-        <label>ROT TORQUE (Power)</label>
-        <input type="range" id="rotTorque" min="0.001" max="0.02" step="0.001" value="0.004">
-        <span class="val-display" id="v-rotTorque">0.004</span>
-    </div>
-    <div class="control-group">
-        <label>ROT FRICTION (Inertia)</label>
-        <input type="range" id="rotFriction" min="0.5" max="0.99" step="0.01" value="0.88">
-        <span class="val-display" id="v-rotFriction">0.88</span>
-    </div>
-    <div class="control-group">
-        <label>DRIFT SENS (Tilt Power)</label>
-        <input type="range" id="driftSens" min="0.05" max="0.6" step="0.01" value="0.18">
-        <span class="val-display" id="v-driftSens">0.18</span>
-    </div>
-    <div class="control-group">
-        <label>DRIFT FRICTION (Slide)</label>
-        <input type="range" id="driftFriction" min="0.8" max="0.99" step="0.01" value="0.95">
-        <span class="val-display" id="v-driftFriction">0.95</span>
-    </div>
-</div>
+<div id="info">Hold at your comfortable 45° angle<br>then press START to calibrate.</div>
+<div id="version">v16.0 (Calibrated)</div>
+<button id="startBtn">START & CALIBRATE</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -65,30 +30,19 @@ const startBtn = document.getElementById("startBtn");
 
 let gameRunning = false;
 let tiltX = 0, tiltY = 0;
-let baseGX = 0, baseGY = 0;
+let baseGX = 0, baseGY = 0; // Calibration offsets
 let touchL = false, touchR = false;
 
-// Dynamic Config linked to UI
+// Your settled "Magic Numbers"
 const CONFIG = {
+    rotTorque: 0.002,
+    rotFriction: 0.97,
+    driftSens: 0.11,
     driftFriction: 0.95,
-    driftSens: 0.18,
-    rotTorque: 0.004,
-    rotFriction: 0.88,
-    deadzone: 0.8,
+    deadzone: 0.4, // Tightened deadzone for better response
     wingWidth: 100,
     noseLength: 50
 };
-
-// UI Linkage
-const sliders = ['rotTorque', 'rotFriction', 'driftSens', 'driftFriction'];
-sliders.forEach(id => {
-    const el = document.getElementById(id);
-    el.addEventListener('input', (e) => {
-        const val = parseFloat(e.target.value);
-        CONFIG[id] = val;
-        document.getElementById('v-' + id).innerText = val;
-    });
-});
 
 let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI / 2, vAngle: 0 };
 
@@ -99,25 +53,22 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
-// Touch Logic (Ignores UI area)
-window.addEventListener("touchstart", (e) => {
-    if (!gameRunning) return;
-    if (e.touches[0].clientY > window.innerHeight - 150) return; // Don't fly while sliding
-    updateTouches(e);
-});
-window.addEventListener("touchend", updateTouches);
-
 function updateTouches(e) {
+    if (!gameRunning) return;
     touchL = false; touchR = false;
     for (let i = 0; i < e.touches.length; i++) {
         if (e.touches[i].clientX < window.innerWidth / 2) touchL = true;
         else touchR = true;
     }
 }
+window.addEventListener("touchstart", updateTouches);
+window.addEventListener("touchend", updateTouches);
 
 function handleMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc) return;
+    
+    // Normalize based on the initial calibration point
     tiltX = acc.y - baseGY; 
     tiltY = acc.x - baseGX;
 }
@@ -125,23 +76,26 @@ function handleMotion(e) {
 function update() {
     if (!gameRunning) return;
 
-    // Rotation
+    // 1. Rotation Logic
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle;
     ship.vAngle *= CONFIG.rotFriction;
 
-    // Translation
+    // 2. Linear Translation (Tilt)
     let forceX = Math.abs(tiltX) > CONFIG.deadzone ? tiltX : 0;
     let forceY = Math.abs(tiltY) > CONFIG.deadzone ? tiltY : 0;
+    
     ship.vx += forceX * CONFIG.driftSens;
     ship.vy += forceY * CONFIG.driftSens;
+    
     ship.x += ship.vx;
     ship.y += ship.vy;
+    
     ship.vx *= CONFIG.driftFriction;
     ship.vy *= CONFIG.driftFriction;
 
-    // Wrap
+    // 3. Screen Wrap
     if (ship.x < 0) ship.x = canvas.width;
     else if (ship.x > canvas.width) ship.x = 0;
     if (ship.y < 0) ship.y = canvas.height;
@@ -153,6 +107,7 @@ function draw() {
     if (!gameRunning) return;
 
     const hw = CONFIG.wingWidth / 2;
+    // Wingtip positions
     const lX = ship.x + Math.cos(ship.angle - Math.PI/2) * hw;
     const lY = ship.y + Math.sin(ship.angle - Math.PI/2) * hw;
     const rX = ship.x + Math.cos(ship.angle + Math.PI/2) * hw;
@@ -160,6 +115,7 @@ function draw() {
     const nX = ship.x + Math.cos(ship.angle) * CONFIG.noseLength;
     const nY = ship.y + Math.sin(ship.angle) * CONFIG.noseLength;
 
+    // Draw Ship
     ctx.fillStyle = "rgba(0, 230, 118, 0.2)";
     ctx.strokeStyle = "#00E676";
     ctx.lineWidth = 3;
@@ -168,14 +124,29 @@ function draw() {
     ctx.closePath();
     ctx.fill(); ctx.stroke();
 
-    if (touchL || touchR) {
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = "#FFF";
-        ctx.fillStyle = "#FFF";
-        if (touchL) { ctx.beginPath(); ctx.arc(rX, rY, 10, 0, Math.PI*2); ctx.fill(); }
-        if (touchR) { ctx.beginPath(); ctx.arc(lX, lY, 10, 0, Math.PI*2); ctx.fill(); }
-        ctx.shadowBlur = 0;
+    // Corrected Engine Glow
+    if (touchL) {
+        drawGlow(lX, lY);
     }
+    if (touchR) {
+        drawGlow(rX, rY);
+    }
+
+    // Engine Core Dots
+    ctx.fillStyle = "#00E676";
+    ctx.beginPath(); ctx.arc(lX, lY, 5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(rX, rY, 5, 0, Math.PI*2); ctx.fill();
+}
+
+function drawGlow(x, y) {
+    ctx.save();
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#FFF";
+    ctx.fillStyle = "#FFF";
+    ctx.beginPath();
+    ctx.arc(x, y, 10, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
@@ -186,17 +157,23 @@ async function startGame() {
         const res = await DeviceMotionEvent.requestPermission();
         if (res !== 'granted') return;
     }
-    startBtn.style.display = "none";
-    window.addEventListener("devicemotion", (e) => {
-        if (!gameRunning) {
-            baseGX = e.accelerationIncludingGravity.x;
-            baseGY = e.accelerationIncludingGravity.y;
-            gameRunning = true;
-            ship.x = canvas.width / 2;
-            ship.y = canvas.height / 2;
-        }
-        handleMotion(e);
-    });
+    
+    // Short delay to allow user to stabilize their hands after clicking
+    startBtn.innerText = "CALIBRATING...";
+    setTimeout(() => {
+        window.addEventListener("devicemotion", (e) => {
+            if (!gameRunning) {
+                // LOCK the current gravity vector as "Center"
+                baseGX = e.accelerationIncludingGravity.x;
+                baseGY = e.accelerationIncludingGravity.y;
+                gameRunning = true;
+                startBtn.style.display = "none";
+                ship.x = canvas.width / 2;
+                ship.y = canvas.height / 2;
+            }
+            handleMotion(e);
+        }, { passive: true });
+    }, 500);
 }
 startBtn.addEventListener("click", startGame);
 </script>
