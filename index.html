@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v26.3 – Landscape</title>
+<title>Trench Run v27.0 – Landscape</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -23,8 +23,8 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="ui">v26.3 | DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
-<div id="startScreen">Trench Run v26.3<br><small>Landscape Mode: Tilt to Steer</small></div>
+<div id="ui">v27.0 | DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
+<div id="startScreen">Trench Run v27.0<br><small>Landscape Mode: Tilt to Steer</small></div>
 <button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
@@ -39,21 +39,27 @@ let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
 let distance = 0, frameCount = 0;
 let speedMultiplier = 0.4;
+let calibrationCounter = 0;
 
 const CONFIG = {
     rotTorque: 0.0016, 
-    driftSens: 0.20,      // Slightly higher for landscape snappiness
-    driftFriction: 0.88,  // Higher friction to prevent sliding off
+    driftSens: 0.18,      // Slightly reduced for better control
+    driftFriction: 0.92,  // Reduced friction for smoother movement
     rotFriction: 0.96,
     trenchSpeedBase: 0.007, 
     curveDrift: 180, 
     gateFrequency: 25,      
     maxZ: 5.0,
-    visibleTrenchDepth: 5   
+    visibleTrenchDepth: 5,
+    collisionZStart: 0.15,  // Start checking collision earlier
+    collisionZEnd: -0.1,    // Continue checking after passing
+    calibrationInterval: 180 // Recalibrate every 3 seconds (60fps * 3)
 };
 
 let ship = { 
-    x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0,
+    x: 0, y: 0, vx: 0, vy: 0, 
+    angle: 0,  // Fixed: start at 0 to match visual orientation
+    vAngle: 0,
     w: 80, h: 8 
 };
 
@@ -65,7 +71,8 @@ let lastAcc = null;
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    ship.x = canvas.width / 2; ship.y = canvas.height / 2;
+    ship.x = canvas.width / 2; 
+    ship.y = canvas.height / 2;
     initStars();
 }
 
@@ -104,9 +111,14 @@ window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
     if (!gameRunning || !lastAcc) return;
 
-    // Landscape Orientation Logic:
-    // Device Y = Screen Horizontal
-    // Device X = Screen Vertical
+    // Recalibrate periodically to handle device position changes
+    calibrationCounter++;
+    if (calibrationCounter >= CONFIG.calibrationInterval) {
+        baseGY = lastAcc.y || 0;
+        baseGX = lastAcc.x || 0;
+        calibrationCounter = 0;
+    }
+
     let rawX = (lastAcc.x || 0);
     let rawY = (lastAcc.y || 0);
 
@@ -115,8 +127,7 @@ window.addEventListener("devicemotion", (e) => {
     // Horizontal Tilt (Y-axis)
     tiltX = Math.abs(rawY) > deadzone ? (rawY - baseGY) : 0; 
     
-    // Vertical Tilt (X-axis)
-    // Offset by ~6 to account for holding the phone at a 45-degree angle
+    // Vertical Tilt (X-axis) - offset by ~6 for 45-degree hold angle
     tiltY = Math.abs(rawX) > deadzone ? (rawX - 6) : 0; 
 });
 
@@ -128,7 +139,8 @@ function spawnGate(customZ) {
         cx: pathX, 
         cy: pathY, 
         w: canvas.width * 0.45, 
-        h: canvas.height * 0.45 
+        h: canvas.height * 0.45,
+        passed: false  // Track if ship has passed this gate
     });
 }
 
@@ -137,27 +149,36 @@ function initTrench() {
     distance = 0;
     frameCount = 0;
     speedMultiplier = 0.4;
+    calibrationCounter = 0;
     ship.vx = 0;
     ship.vy = 0;
-    // Reset path
-    pathX = 0; pathY = 0;
+    ship.angle = 0;  // Reset angle
+    ship.vAngle = 0;
+    pathX = 0; 
+    pathY = 0;
+    
+    // Spawn initial gates with proper spacing for slow start
     for(let i=1; i<=5; i++) {
-        spawnGate(i * 0.7);
+        spawnGate(i * 1.0);  // Increased spacing for slow startup
     }
 }
 
 function update() {
     if (!gameRunning) return;
     
-    if (speedMultiplier < 1.0) speedMultiplier += 0.001; 
+    // Gradual speed increase
+    if (speedMultiplier < 1.0) speedMultiplier += 0.0008; // Slower ramp-up
     let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
     distance += currentSpeed * 50;
     frameCount++;
 
+    // Path curvature
     pathX = Math.sin(frameCount * 0.012) * CONFIG.curveDrift;
     pathY = Math.cos(frameCount * 0.008) * (CONFIG.curveDrift * 0.4);
 
-    if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
+    // Spawn gates with speed-adjusted frequency
+    let adjustedFrequency = Math.floor(CONFIG.gateFrequency / speedMultiplier);
+    if (frameCount % adjustedFrequency === 0) spawnGate();
 
     // Movement
     if (touchL || keyL) ship.vAngle -= CONFIG.rotTorque;
@@ -173,7 +194,7 @@ function update() {
     ship.x += ship.vx; 
     ship.y += ship.vy;
 
-    // Apply friction to stop sliding
+    // Apply friction
     ship.vx *= CONFIG.driftFriction; 
     ship.vy *= CONFIG.driftFriction;
 
@@ -181,28 +202,45 @@ function update() {
     ship.x = Math.max(20, Math.min(canvas.width - 20, ship.x));
     ship.y = Math.max(20, Math.min(canvas.height - 20, ship.y));
 
+    // Update stars
     stars.forEach(s => {
         s.z -= currentSpeed * 2;
         if(s.z <= 0) s.z = CONFIG.maxZ;
     });
 
+    // Update and check gates
     for (let i = gates.length - 1; i >= 0; i--) {
-        let prevZ = gates[i].z;
-        gates[i].z -= currentSpeed;
+        let g = gates[i];
+        let prevZ = g.z;
+        g.z -= currentSpeed;
         
-        if (prevZ > 0.2 && gates[i].z <= 0.2) {
-            const dPct = Math.pow(1 - (0.2 / CONFIG.maxZ), 2);
-            const cX = (canvas.width / 2) + gates[i].cx * dPct;
-            const cY = (canvas.height / 2) + gates[i].cy * dPct;
+        // Improved collision detection - check over a range of Z values
+        if (!g.passed && g.z <= CONFIG.collisionZStart && g.z >= CONFIG.collisionZEnd) {
+            const dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2);
+            const cX = (canvas.width / 2) + g.cx * dPct;
+            const cY = (canvas.height / 2) + g.cy * dPct;
             
-            const gW = (canvas.width * 0.45);
-            const gH = (canvas.height * 0.45);
+            // Use scaled gate dimensions for collision
+            const scale = 0.05 + dPct * 2.5;
+            const gW = (canvas.width * 0.45) * scale;
+            const gH = (canvas.height * 0.45) * scale;
 
-            if (Math.abs(ship.x - cX) > gW/2 || Math.abs(ship.y - cY) > gH/2) {
+            // Add tolerance for collision (10% margin)
+            const tolerance = 1.1;
+            if (Math.abs(ship.x - cX) > (gW/2) * tolerance || 
+                Math.abs(ship.y - cY) > (gH/2) * tolerance) {
                 gameOver();
+                return;
             }
         }
-        if (gates[i].z <= 0) gates.splice(i, 1);
+        
+        // Mark as passed when behind the ship
+        if (g.z < CONFIG.collisionZEnd) {
+            g.passed = true;
+        }
+        
+        // Remove gates that are far behind
+        if (g.z <= -0.5) gates.splice(i, 1);
     }
 
     document.getElementById("dist").innerText = Math.floor(distance);
@@ -212,7 +250,7 @@ function update() {
 function gameOver() {
     gameRunning = false;
     ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     setTimeout(() => { 
         startBtn.style.display = "block";
         startBtn.innerText = "RETRY MISSION";
@@ -221,36 +259,48 @@ function gameOver() {
 }
 
 function draw() {
-    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#000"; 
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
     const mx = canvas.width / 2, my = canvas.height / 2;
 
+    // Draw stars
     ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
     stars.forEach(s => {
         let sz = Math.pow(1 - (s.z / CONFIG.maxZ), 2);
-        let sx = mx + s.x * sz; let sy = my + s.y * sz;
+        let sx = mx + s.x * sz; 
+        let sy = my + s.y * sz;
         ctx.beginPath();
         ctx.moveTo(sx, sy);
         ctx.lineTo(sx + (s.x * 0.05), sy + (s.y * 0.05));
         ctx.stroke();
     });
 
+    // Draw gates
     for (let i = gates.length - 1; i >= 0; i--) {
         let g = gates[i];
         let dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2); 
         let scale = 0.05 + dPct * 2.5; 
         
-        let sW = (canvas.width * 0.45) * scale; let sH = (canvas.height * 0.45) * scale;
-        let sX = mx + g.cx * dPct; let sY = my + g.cy * dPct;
+        let sW = (canvas.width * 0.45) * scale; 
+        let sH = (canvas.height * 0.45) * scale;
+        let sX = mx + g.cx * dPct; 
+        let sY = my + g.cy * dPct;
 
         let isNearest = (i === 0);
         let alpha = Math.min(1, dPct * 1.5);
         
-        ctx.strokeStyle = isNearest ? `rgba(255, 255, 255, ${alpha})` : `rgba(0, 230, 118, ${alpha * 0.5})`;
+        // Color coding: white for nearest, green for passed, cyan for upcoming
+        let color = isNearest ? `rgba(255, 255, 255, ${alpha})` : 
+                    g.passed ? `rgba(0, 230, 118, ${alpha * 0.3})` :
+                    `rgba(0, 230, 118, ${alpha * 0.5})`;
+        
+        ctx.strokeStyle = color;
         ctx.lineWidth = isNearest ? 4 : 1; 
         ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
 
+        // Draw trench walls connecting gates
         if (i < CONFIG.visibleTrenchDepth && i < gates.length - 1) {
             let n = gates[i+1];
             let nPct = Math.pow(1 - (n.z / CONFIG.maxZ), 2);
@@ -261,26 +311,38 @@ function draw() {
             ctx.strokeStyle = `rgba(255, 140, 0, ${0.4 / (i + 1)})`;
             ctx.beginPath();
             ctx.moveTo(sX-sW/2, sY-sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
-            ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY+nH/2);
-            ctx.moveTo(sX-sW/2, sY+sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
+            ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY-nH/2);
+            ctx.moveTo(sX-sW/2, sY+sH/2); ctx.lineTo(nX-nW/2, nY+nH/2);
             ctx.moveTo(sX+sW/2, sY+sH/2); ctx.lineTo(nX+nW/2, nY+nH/2);
             ctx.stroke();
         }
     }
 
+    // Draw ship - now correctly oriented to match angle=0
     ctx.save();
-    ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
-    ctx.shadowBlur = 10; ctx.shadowColor = "#00E676";
+    ctx.translate(ship.x, ship.y); 
+    ctx.rotate(ship.angle);
+    ctx.strokeStyle = "#fff"; 
+    ctx.lineWidth = 2;
+    ctx.shadowBlur = 10; 
+    ctx.shadowColor = "#00E676";
     ctx.beginPath();
-    ctx.moveTo(20, 0); 
-    ctx.lineTo(-10, -ship.w/2); ctx.lineTo(-5, 0); ctx.lineTo(-10, ship.w/2);
-    ctx.closePath(); ctx.stroke();
-    ctx.fillStyle = "#00E676"; ctx.fillRect(-12, -8, 3, 16);
+    ctx.moveTo(20, 0);  // Nose pointing right (angle=0)
+    ctx.lineTo(-10, -ship.w/2); 
+    ctx.lineTo(-5, 0); 
+    ctx.lineTo(-10, ship.w/2);
+    ctx.closePath(); 
+    ctx.stroke();
+    ctx.fillStyle = "#00E676"; 
+    ctx.fillRect(-12, -8, 3, 16);
     ctx.restore();
 }
 
-function loop() { update(); draw(); requestAnimationFrame(loop); }
+function loop() { 
+    update(); 
+    draw(); 
+    requestAnimationFrame(loop); 
+}
 loop();
 
 startBtn.addEventListener("click", async () => {
@@ -292,7 +354,7 @@ startBtn.addEventListener("click", async () => {
         }
     }
     
-    // Baseline calibration for current device tilt
+    // Initial calibration
     if (lastAcc) { 
         baseGY = lastAcc.y || 0; 
         baseGX = lastAcc.x || 0; 
