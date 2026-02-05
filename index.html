@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v27.1 – Landscape</title>
+<title>Trench Run v27.2 – Landscape</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -23,8 +23,8 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="ui">v27.1 | DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
-<div id="startScreen">Trench Run v27.1<br><small>Landscape Mode: Tilt to Steer</small></div>
+<div id="ui">v27.2 | DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
+<div id="startScreen">Trench Run v27.2<br><small>Landscape Mode: Tilt to Steer</small></div>
 <button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
@@ -52,21 +52,24 @@ const CONFIG = {
     visibleTrenchDepth: 5,
     collisionZStart: 0.15,
     collisionZEnd: -0.1,
-    gateWidthPct: 0.28,    // Reduced from 0.45 to make it harder
-    gateHeightPct: 0.28    // Reduced from 0.45 to make it harder
+    gateWidthPct: 0.28,
+    gateHeightPct: 0.28,
+    dangerZoneZ: 0.3,  // When danger zone becomes visible
+    edgeWarningThreshold: 0.7  // % of gate size before edge warning
 };
 
 let ship = { 
     x: 0, y: 0, vx: 0, vy: 0, 
-    angle: -Math.PI/2,  // Restored original orientation
+    angle: -Math.PI/2,
     vAngle: 0,
-    w: 80, h: 8 
+    w: 120, h: 12  // Wider ship (was 80, 8)
 };
 
 let gates = []; 
 let stars = []; 
 let pathX = 0, pathY = 0; 
 let lastAcc = null;
+let edgeWarning = { active: false, intensity: 0 };
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -78,7 +81,7 @@ function resize() {
 
 function initStars() {
     stars = [];
-    for(let i=0; i<60; i++) {
+    for(let i=0; i<80; i++) {  // More stars for brightness
         stars.push({
             x: Math.random() * canvas.width - canvas.width/2,
             y: Math.random() * canvas.height - canvas.height/2,
@@ -116,10 +119,7 @@ window.addEventListener("devicemotion", (e) => {
 
     const deadzone = 0.3;
 
-    // Horizontal Tilt (Y-axis)
     tiltX = Math.abs(rawY) > deadzone ? (rawY - baseGY) : 0; 
-    
-    // Vertical Tilt (X-axis) - offset by ~6 for 45-degree hold angle
     tiltY = Math.abs(rawX) > deadzone ? (rawX - 6) : 0; 
 });
 
@@ -143,31 +143,59 @@ function initTrench() {
     speedMultiplier = 0.4;
     ship.vx = 0;
     ship.vy = 0;
-    ship.angle = -Math.PI/2;  // Reset to correct orientation
+    ship.angle = -Math.PI/2;
     ship.vAngle = 0;
     pathX = 0; 
     pathY = 0;
+    edgeWarning = { active: false, intensity: 0 };
     
-    // Spawn initial gates with proper spacing for slow start
     for(let i=1; i<=5; i++) {
         spawnGate(i * 1.0);
+    }
+}
+
+function getGateColor(gate, isNearest) {
+    if (gate.passed) {
+        return `rgba(0, 230, 118, 0.4)`;  // Dim green for passed
+    }
+    
+    // Color shift based on Z distance
+    let z = gate.z;
+    
+    if (z > CONFIG.dangerZoneZ) {
+        // Far away - cyan/blue
+        return `rgba(0, 200, 255, 0.6)`;
+    } else if (z > CONFIG.collisionZStart) {
+        // Approaching - green to yellow
+        let t = 1 - ((z - CONFIG.collisionZStart) / (CONFIG.dangerZoneZ - CONFIG.collisionZStart));
+        let r = Math.floor(0 + t * 255);
+        let g = Math.floor(230 - t * 25);
+        let b = Math.floor(118 - t * 118);
+        return `rgba(${r}, ${g}, ${b}, 0.8)`;
+    } else if (z >= CONFIG.collisionZEnd) {
+        // In danger zone - yellow to red
+        let t = 1 - ((z - CONFIG.collisionZEnd) / (CONFIG.collisionZStart - CONFIG.collisionZEnd));
+        let r = 255;
+        let g = Math.floor(230 - t * 230);
+        let b = 0;
+        return `rgba(${r}, ${g}, ${b}, 1.0)`;
+    } else {
+        // Behind - dim green
+        return `rgba(0, 230, 118, 0.3)`;
     }
 }
 
 function update() {
     if (!gameRunning) return;
     
-    // Gradual speed increase
     if (speedMultiplier < 1.0) speedMultiplier += 0.0008;
     let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
     distance += currentSpeed * 50;
     frameCount++;
 
-    // Path curvature
     pathX = Math.sin(frameCount * 0.012) * CONFIG.curveDrift;
     pathY = Math.cos(frameCount * 0.008) * (CONFIG.curveDrift * 0.4);
 
-    // Spawn gates with speed-adjusted frequency
     let adjustedFrequency = Math.floor(CONFIG.gateFrequency / speedMultiplier);
     if (frameCount % adjustedFrequency === 0) spawnGate();
 
@@ -178,45 +206,63 @@ function update() {
     ship.angle += ship.vAngle; 
     ship.vAngle *= CONFIG.rotFriction;
 
-    // Apply tilt to velocity
     ship.vx += tiltX * CONFIG.driftSens; 
     ship.vy += tiltY * CONFIG.driftSens;
 
     ship.x += ship.vx; 
     ship.y += ship.vy;
 
-    // Apply friction
     ship.vx *= CONFIG.driftFriction; 
     ship.vy *= CONFIG.driftFriction;
 
-    // Bounds
     ship.x = Math.max(20, Math.min(canvas.width - 20, ship.x));
     ship.y = Math.max(20, Math.min(canvas.height - 20, ship.y));
 
-    // Update stars
     stars.forEach(s => {
         s.z -= currentSpeed * 2;
         if(s.z <= 0) s.z = CONFIG.maxZ;
     });
 
+    // Reset edge warning
+    edgeWarning.active = false;
+    edgeWarning.intensity = 0;
+
     // Update and check gates
     for (let i = gates.length - 1; i >= 0; i--) {
         let g = gates[i];
-        let prevZ = g.z;
         g.z -= currentSpeed;
         
-        // Improved collision detection - check over a range of Z values
+        // Check edge warning for nearest gate in danger zone
+        if (i === 0 && g.z <= CONFIG.dangerZoneZ && g.z >= CONFIG.collisionZEnd && !g.passed) {
+            const dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2);
+            const cX = (canvas.width / 2) + g.cx * dPct;
+            const cY = (canvas.height / 2) + g.cy * dPct;
+            
+            const scale = 0.05 + dPct * 2.5;
+            const gW = (canvas.width * CONFIG.gateWidthPct) * scale;
+            const gH = (canvas.height * CONFIG.gateHeightPct) * scale;
+
+            // Calculate how far off-center we are (0 = centered, 1 = at edge)
+            let offsetX = Math.abs(ship.x - cX) / (gW/2);
+            let offsetY = Math.abs(ship.y - cY) / (gH/2);
+            let maxOffset = Math.max(offsetX, offsetY);
+
+            if (maxOffset > CONFIG.edgeWarningThreshold) {
+                edgeWarning.active = true;
+                edgeWarning.intensity = Math.min(1, (maxOffset - CONFIG.edgeWarningThreshold) / (1 - CONFIG.edgeWarningThreshold));
+            }
+        }
+        
+        // Collision detection
         if (!g.passed && g.z <= CONFIG.collisionZStart && g.z >= CONFIG.collisionZEnd) {
             const dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2);
             const cX = (canvas.width / 2) + g.cx * dPct;
             const cY = (canvas.height / 2) + g.cy * dPct;
             
-            // Use scaled gate dimensions for collision
             const scale = 0.05 + dPct * 2.5;
             const gW = (canvas.width * CONFIG.gateWidthPct) * scale;
             const gH = (canvas.height * CONFIG.gateHeightPct) * scale;
 
-            // Collision check with small tolerance
             const tolerance = 1.05;
             if (Math.abs(ship.x - cX) > (gW/2) * tolerance || 
                 Math.abs(ship.y - cY) > (gH/2) * tolerance) {
@@ -225,12 +271,10 @@ function update() {
             }
         }
         
-        // Mark as passed when behind the ship
         if (g.z < CONFIG.collisionZEnd) {
             g.passed = true;
         }
         
-        // Remove gates that are far behind
         if (g.z <= -0.5) gates.splice(i, 1);
     }
 
@@ -256,17 +300,76 @@ function draw() {
 
     const mx = canvas.width / 2, my = canvas.height / 2;
 
-    // Draw stars
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+    // Draw edge warning glow
+    if (edgeWarning.active) {
+        let intensity = edgeWarning.intensity;
+        ctx.fillStyle = `rgba(255, 50, 50, ${intensity * 0.15})`;
+        
+        // Vignette effect
+        let gradient = ctx.createRadialGradient(mx, my, canvas.width * 0.3, mx, my, canvas.width * 0.7);
+        gradient.addColorStop(0, 'rgba(255, 50, 50, 0)');
+        gradient.addColorStop(1, `rgba(255, 50, 50, ${intensity * 0.3})`);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // Draw stars (brighter)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";  // Increased from 0.2
+    ctx.lineWidth = 1.5;
     stars.forEach(s => {
         let sz = Math.pow(1 - (s.z / CONFIG.maxZ), 2);
         let sx = mx + s.x * sz; 
         let sy = my + s.y * sz;
         ctx.beginPath();
         ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + (s.x * 0.05), sy + (s.y * 0.05));
+        ctx.lineTo(sx + (s.x * 0.08), sy + (s.y * 0.08));
         ctx.stroke();
     });
+
+    // Draw target reticle for next gate
+    if (gates.length > 0) {
+        let nextGate = gates[0];
+        if (nextGate.z > CONFIG.collisionZEnd && !nextGate.passed) {
+            let dPct = Math.pow(1 - (nextGate.z / CONFIG.maxZ), 2);
+            let targetX = mx + nextGate.cx * dPct;
+            let targetY = my + nextGate.cy * dPct;
+            
+            // Pulsing reticle
+            let pulse = 0.8 + Math.sin(frameCount * 0.1) * 0.2;
+            let reticleSize = 15 * pulse;
+            
+            ctx.strokeStyle = `rgba(0, 255, 200, 0.6)`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(targetX, targetY, reticleSize, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Crosshair
+            ctx.beginPath();
+            ctx.moveTo(targetX - reticleSize - 5, targetY);
+            ctx.lineTo(targetX - reticleSize, targetY);
+            ctx.moveTo(targetX + reticleSize, targetY);
+            ctx.lineTo(targetX + reticleSize + 5, targetY);
+            ctx.moveTo(targetX, targetY - reticleSize - 5);
+            ctx.lineTo(targetX, targetY - reticleSize);
+            ctx.moveTo(targetX, targetY + reticleSize);
+            ctx.lineTo(targetX, targetY + reticleSize + 5);
+            ctx.stroke();
+        }
+    }
+
+    // Draw danger zone visualization
+    if (gates.length > 0 && gates[0].z <= CONFIG.dangerZoneZ && gates[0].z >= CONFIG.collisionZEnd) {
+        let g = gates[0];
+        let zNorm = (g.z - CONFIG.collisionZEnd) / (CONFIG.dangerZoneZ - CONFIG.collisionZEnd);
+        
+        // Draw a plane sweeping toward player
+        ctx.strokeStyle = `rgba(255, 100, 0, ${0.3 * (1 - zNorm)})`;
+        ctx.lineWidth = 2;
+        
+        let planeSize = canvas.width * 0.6 * (1 - zNorm);
+        ctx.strokeRect(mx - planeSize/2, my - planeSize/2, planeSize, planeSize);
+    }
 
     // Draw gates
     for (let i = gates.length - 1; i >= 0; i--) {
@@ -280,18 +383,13 @@ function draw() {
         let sY = my + g.cy * dPct;
 
         let isNearest = (i === 0);
-        let alpha = Math.min(1, dPct * 1.5);
-        
-        // Color coding: white for nearest, green for passed, cyan for upcoming
-        let color = isNearest ? `rgba(255, 255, 255, ${alpha})` : 
-                    g.passed ? `rgba(0, 230, 118, ${alpha * 0.3})` :
-                    `rgba(0, 230, 118, ${alpha * 0.5})`;
+        let color = getGateColor(g, isNearest);
         
         ctx.strokeStyle = color;
-        ctx.lineWidth = isNearest ? 4 : 1; 
+        ctx.lineWidth = isNearest ? 4 : 2;  // Thicker lines
         ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
 
-        // Draw trench walls connecting gates
+        // Draw trench walls (brighter)
         if (i < CONFIG.visibleTrenchDepth && i < gates.length - 1) {
             let n = gates[i+1];
             let nPct = Math.pow(1 - (n.z / CONFIG.maxZ), 2);
@@ -300,7 +398,8 @@ function draw() {
             let nW = (canvas.width * CONFIG.gateWidthPct) * nScale;
             let nH = (canvas.height * CONFIG.gateHeightPct) * nScale;
 
-            ctx.strokeStyle = `rgba(255, 140, 0, ${0.4 / (i + 1)})`;
+            ctx.strokeStyle = `rgba(255, 180, 50, ${0.5 / (i + 1)})`;  // Brighter walls
+            ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(sX-sW/2, sY-sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
             ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY-nH/2);
@@ -310,23 +409,23 @@ function draw() {
         }
     }
 
-    // Draw ship - original orientation
+    // Draw ship (wider and brighter)
     ctx.save();
     ctx.translate(ship.x, ship.y); 
     ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff"; 
-    ctx.lineWidth = 2;
-    ctx.shadowBlur = 10; 
+    ctx.lineWidth = 3;  // Thicker outline
+    ctx.shadowBlur = 15;  // More glow
     ctx.shadowColor = "#00E676";
     ctx.beginPath();
-    ctx.moveTo(20, 0);
-    ctx.lineTo(-10, -ship.w/2); 
-    ctx.lineTo(-5, 0); 
-    ctx.lineTo(-10, ship.w/2);
+    ctx.moveTo(25, 0);  // Longer nose
+    ctx.lineTo(-15, -ship.w/2); 
+    ctx.lineTo(-8, 0); 
+    ctx.lineTo(-15, ship.w/2);
     ctx.closePath(); 
     ctx.stroke();
     ctx.fillStyle = "#00E676"; 
-    ctx.fillRect(-12, -8, 3, 16);
+    ctx.fillRect(-18, -12, 4, 24);  // Wider engines
     ctx.restore();
 }
 
@@ -346,7 +445,6 @@ startBtn.addEventListener("click", async () => {
         }
     }
     
-    // ONE-TIME calibration only at start
     if (lastAcc) { 
         baseGY = lastAcc.y || 0; 
         baseGX = lastAcc.x || 0; 
