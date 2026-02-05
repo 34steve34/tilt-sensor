@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v30.5 – High-Speed Illusion</title>
+<title>Space Slalom v31.0</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
     #gameCanvas { display: block; }
     #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 18px; }
     #startBtn {
-        position: absolute; top: 60%; left: 50%; transform: translate(-50%, -50%);
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
         padding: 20px 40px; font-size: 24px; background: #00E676; color: #000;
         border: none; border-radius: 4px; cursor: pointer; z-index: 100; font-weight: bold;
     }
@@ -18,8 +18,8 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="ui">v30.5 | SPEED: <span id="thrust">0</span>%</div>
-<button id="startBtn">ENGAGE HYPERDRIVE</button>
+<div id="ui">SPACE SLALOM v31.0 | SPEED: <span id="thrust">0</span>%</div>
+<button id="startBtn">ENGAGE SLALOM</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -28,36 +28,31 @@ const startBtn = document.getElementById("startBtn");
 
 let gameRunning = false;
 let touchL = false, touchR = false;
-let keyL = false, keyR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0; 
 let frameCount = 0;
-let speedMultiplier = 0.6; // Starts faster for the "Vibe"
+let speedMultiplier = 0.8; 
 
 const CONFIG = {
-    rotTorque: 0.0016,    
-    driftSens: 0.22,      
-    driftFriction: 0.88,  
-    rotFriction: 0.96,    
-    trenchSpeedBase: 0.012, // FASTER: Things rush at you quicker
-    curveDrift: 80,         // GENTLE: The tunnel doesn't swing wildly
-    gateFrequency: 18,      // FREQUENT: More gates on screen = feeling of speed
-    maxZ: 8.0,              // DEEP: You see the twist way in advance
-    gateWidthPct: 0.30,     
-    gateHeightPct: 0.20,
-    maxRollDelta: 0.04      // SLOW ROTATION: Much easier to "analyze" the twist
+    rotTorque: 0.0018,    
+    driftSens: 0.28,      
+    driftFriction: 0.85,  
+    rotFriction: 0.94,    
+    speedBase: 0.015,     // High Speed
+    gateFreq: 22,         
+    maxZ: 10.0,           // Very Deep Field
+    gateSizeLimit: 0.33,  // Gate won't exceed 33% of screen
+    pathRandomness: 300    // How far gates drift from center
 };
 
 let ship = { 
     x: 0, y: 0, vx: 0, vy: 0, 
-    angle: -Math.PI/2, 
-    vAngle: 0,
-    w: 100, h: 10            
+    angle: -Math.PI/2, vAngle: 0,
+    w: 80, h: 8            
 };
 
 let gates = []; 
 let stars = []; 
-let pathX = 0, pathY = 0; 
 let lastAcc = null;
 
 function resize() {
@@ -69,10 +64,10 @@ function resize() {
 
 function initStars() {
     stars = [];
-    for(let i=0; i<150; i++) {
+    for(let i=0; i<200; i++) {
         stars.push({
-            x: Math.random() * canvas.width * 3 - canvas.width * 1.5,
-            y: Math.random() * canvas.height * 3 - canvas.height * 1.5,
+            x: Math.random() * canvas.width * 4 - canvas.width * 2,
+            y: Math.random() * canvas.height * 4 - canvas.height * 2,
             z: Math.random() * CONFIG.maxZ
         });
     }
@@ -90,47 +85,37 @@ window.addEventListener("touchend", () => { touchL = false; touchR = false; });
 window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
     if (!gameRunning || !lastAcc) return;
-    let rawX = (lastAcc.x || 0); let rawY = (lastAcc.y || 0);
-    const deadzone = 0.2;
-    tiltX = Math.abs(rawY - baseGY) > deadzone ? (rawY - baseGY) : 0; 
-    tiltY = Math.abs(rawX - baseGX) > deadzone ? (rawX - baseGX) : 0; 
+    let rawX = lastAcc.x || 0; let rawY = lastAcc.y || 0;
+    tiltX = (rawY - baseGY); 
+    tiltY = (rawX - baseGX); 
 });
 
-function spawnGate(customZ, forceInitial = false) {
-    if (!forceInitial) {
-        // The rotation changes very slowly now
-        globalRoll += (Math.random() - 0.5) * CONFIG.maxRollDelta;
-    }
+function spawnGate() {
+    // Slalom Logic: Every gate is in a new random spot
     gates.push({ 
-        z: customZ || CONFIG.maxZ, 
-        cx: pathX, cy: pathY, 
-        w: canvas.width * CONFIG.gateWidthPct, 
-        h: canvas.height * CONFIG.gateHeightPct,
-        roll: globalRoll, passed: false
+        z: CONFIG.maxZ, 
+        x: (Math.random() - 0.5) * canvas.width * 1.2, 
+        y: (Math.random() - 0.5) * canvas.height * 1.2, 
+        roll: Math.random() * Math.PI, // Random orientation
+        passed: false
     });
 }
 
-function initTrench() {
-    gates = []; frameCount = 0; speedMultiplier = 0.6;
+function initGame() {
+    gates = []; frameCount = 0;
     ship.x = canvas.width / 2; ship.y = canvas.height / 2;
     ship.vx = 0; ship.vy = 0; ship.angle = -Math.PI/2; ship.vAngle = 0;
-    pathX = 0; pathY = 0; globalRoll = 0; 
-    for(let i=1; i<=12; i++) spawnGate(i * 0.6, true);
+    for(let i=1; i<=5; i++) spawnGate();
 }
 
 function update() {
     if (!gameRunning) return;
-    
-    let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
+    let curSpeed = CONFIG.speedBase * speedMultiplier;
     frameCount++;
 
-    // Perceivable movement is smoother/slower
-    pathX = Math.sin(frameCount * 0.005) * CONFIG.curveDrift;
-    pathY = Math.cos(frameCount * 0.003) * (CONFIG.curveDrift * 0.3);
+    if (frameCount % CONFIG.gateFreq === 0) spawnGate();
 
-    if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
-
-    // Inputs
+    // Physics
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
@@ -138,38 +123,32 @@ function update() {
     ship.x += ship.vx; ship.y += ship.vy;
     ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
 
-    ship.x = Math.max(10, Math.min(canvas.width - 10, ship.x));
-    ship.y = Math.max(10, Math.min(canvas.height - 10, ship.y));
+    ship.x = Math.max(0, Math.min(canvas.width, ship.x));
+    ship.y = Math.max(0, Math.min(canvas.height, ship.y));
 
     stars.forEach(s => {
-        s.z -= currentSpeed * 3; // Stars move VERY fast for speed sensation
+        s.z -= curSpeed * 4; 
         if(s.z <= 0) s.z = CONFIG.maxZ;
     });
 
     for (let i = gates.length - 1; i >= 0; i--) {
         let g = gates[i];
-        g.z -= currentSpeed;
+        g.z -= curSpeed;
         
-        if (!g.passed && g.z <= 0.15 && g.z >= -0.1) {
-            const dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2);
-            const cX = (canvas.width / 2) + g.cx * dPct;
-            const cY = (canvas.height / 2) + g.cy * dPct;
-            let rx = (ship.x - cX) * Math.cos(-g.roll) - (ship.y - cY) * Math.sin(-g.roll);
-            let ry = (ship.x - cX) * Math.sin(-g.roll) + (ship.y - cY) * Math.cos(-g.roll);
-            let relAngle = (ship.angle + Math.PI/2) - g.roll;
+        // The Intercept Moment (Z = 0)
+        if (!g.passed && g.z <= 0.1 && g.z >= -0.1) {
+            let sW = canvas.height * CONFIG.gateSizeLimit; 
+            let sH = sW * 0.4;
 
-            const gW = (canvas.width * CONFIG.gateWidthPct) * (0.05 + dPct * 2.5);
-            const gH = (canvas.height * CONFIG.gateHeightPct) * (0.05 + dPct * 2.5);
+            // Check if ship is within the portal bounds at the moment of passing
+            let dx = ship.x - (canvas.width/2 + g.x * 0.1); 
+            let dy = ship.y - (canvas.height/2 + g.y * 0.1);
+            let rx = dx * Math.cos(-g.roll) - dy * Math.sin(-g.roll);
+            let ry = dx * Math.sin(-g.roll) + dy * Math.cos(-g.roll);
 
-            let hitWall = false;
-            let sw = ship.w/2, sh = ship.h/2;
-            let corners = [[-sw, -sh], [sw, -sh], [sw, sh], [-sw, sh]];
-            for(let p of corners) {
-                let cx = rx + (p[0] * Math.cos(relAngle) - p[1] * Math.sin(relAngle));
-                let cy = ry + (p[0] * Math.sin(relAngle) + p[1] * Math.cos(relAngle));
-                if (Math.abs(cx) > gW/2 || Math.abs(cy) > gH/2) { hitWall = true; break; }
+            if (Math.abs(rx) > sW/2 || Math.abs(ry) > sH/2) {
+                gameRunning = false; startBtn.style.display = "block"; return;
             }
-            if (hitWall) { gameRunning = false; startBtn.style.display = "block"; return; }
         }
         if (g.z < -0.1) g.passed = true;
         if (g.z <= -0.5) gates.splice(i, 1);
@@ -182,57 +161,64 @@ function draw() {
     if (!gameRunning) return;
     const mx = canvas.width / 2, my = canvas.height / 2;
 
+    // Stars
     stars.forEach(s => {
         let sz = Math.pow(1 - (s.z / CONFIG.maxZ), 2);
-        ctx.fillStyle = `rgba(255, 255, 255, ${0.8 - s.z/CONFIG.maxZ})`;
+        ctx.fillStyle = `rgba(0, 230, 118, ${1 - s.z/CONFIG.maxZ})`;
         ctx.fillRect(mx + s.x * sz, my + s.y * sz, 2, 2);
     });
 
+    // Draw Ghost Path (Slalom Lead)
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(0, 230, 118, 0.15)";
+    ctx.lineWidth = 1;
+    for(let i=0; i < Math.min(gates.length, 4); i++) {
+        let g = gates[i];
+        let dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2);
+        let gx = mx + g.x * dPct; let gy = my + g.y * dPct;
+        if(i===0) ctx.moveTo(gx, gy); else ctx.lineTo(gx, gy);
+    }
+    ctx.stroke();
+
+    // Draw Slalom Gates
     for (let i = gates.length - 1; i >= 0; i--) {
         let g = gates[i];
         let dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2); 
-        let scale = 0.05 + dPct * 2.5; 
-        let sW = (canvas.width * CONFIG.gateWidthPct) * scale; 
-        let sH = (canvas.height * CONFIG.gateHeightPct) * scale;
-        let sX = mx + g.cx * dPct; let sY = my + g.cy * dPct;
+        
+        // Gate starts at 0 and grows to 33% of screen height
+        let maxGatePX = canvas.height * CONFIG.gateSizeLimit;
+        let sW = maxGatePX * dPct; 
+        let sH = (sW * 0.4);
+        
+        let sX = mx + g.x * dPct; let sY = my + g.y * dPct;
 
         ctx.save();
         ctx.translate(sX, sY); ctx.rotate(g.roll);
-        ctx.strokeStyle = i === 0 ? "#fff" : `rgba(0, 230, 118, ${0.6 - (i*0.05)})`;
-        ctx.lineWidth = i === 0 ? 3 : 1;
-        ctx.strokeRect(-sW/2, -sH/2, sW, sH);
+        ctx.strokeStyle = i === 0 ? "#fff" : `rgba(0, 230, 118, ${0.5 - (i*0.05)})`;
+        ctx.lineWidth = i === 0 ? 4 : 1;
+        
+        // Draw the Slalom Gate (Corner brackets feel more "Space Slalom")
+        let b = sW * 0.2; // bracket size
+        ctx.beginPath();
+        // Top Left
+        ctx.moveTo(-sW/2 + b, -sH/2); ctx.lineTo(-sW/2, -sH/2); ctx.lineTo(-sW/2, -sH/2 + b);
+        // Top Right
+        ctx.moveTo(sW/2 - b, -sH/2); ctx.lineTo(sW/2, -sH/2); ctx.lineTo(sW/2, -sH/2 + b);
+        // Bottom Right
+        ctx.moveTo(sW/2 - b, sH/2); ctx.lineTo(sW/2, sH/2); ctx.lineTo(sW/2, sH/2 - b);
+        // Bottom Left
+        ctx.moveTo(-sW/2 + b, sH/2); ctx.lineTo(-sW/2, sH/2); ctx.lineTo(-sW/2, sH/2 - b);
+        ctx.stroke();
+        
         ctx.restore();
-
-        if (i < gates.length - 1) {
-            let n = gates[i+1];
-            let nPct = Math.pow(1 - (n.z / CONFIG.maxZ), 2);
-            let nScale = 0.05 + nPct * 2.5;
-            let nW = (canvas.width * CONFIG.gateWidthPct) * nScale, nH = (canvas.height * CONFIG.gateHeightPct) * nScale;
-            let nX = mx + n.cx * nPct, nY = my + n.cy * nPct;
-
-            const getC = (x, y, w, h, r) => [
-                {x: x + (-w/2)*Math.cos(r) - (-h/2)*Math.sin(r), y: y + (-w/2)*Math.sin(r) + (-h/2)*Math.cos(r)},
-                {x: x + (w/2)*Math.cos(r) - (-h/2)*Math.sin(r), y: y + (w/2)*Math.sin(r) + (-h/2)*Math.cos(r)},
-                {x: x + (w/2)*Math.cos(r) - (h/2)*Math.sin(r), y: y + (w/2)*Math.sin(r) + (h/2)*Math.cos(r)},
-                {x: x + (-w/2)*Math.cos(r) - (h/2)*Math.sin(r), y: y + (-w/2)*Math.sin(r) + (h/2)*Math.cos(r)}
-            ];
-
-            let c1 = getC(sX, sY, sW, sH, g.roll);
-            let c2 = getC(nX, nY, nW, nH, n.roll);
-
-            ctx.strokeStyle = `rgba(0, 150, 80, ${0.1 / (i + 1)})`;
-            ctx.beginPath();
-            for(let k=0; k<4; k++) { ctx.moveTo(c1[k].x, c1[k].y); ctx.lineTo(c2[k].x, c2[k].y); }
-            ctx.stroke();
-        }
     }
 
+    // Ship
     ctx.save();
     ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(25, 0); 
-    ctx.lineTo(-10, -ship.w/2); ctx.lineTo(-5, 0); ctx.lineTo(-10, ship.w/2);
+    ctx.moveTo(20, 0); ctx.lineTo(-10, -ship.w/2); ctx.lineTo(-5, 0); ctx.lineTo(-10, ship.w/2);
     ctx.closePath(); ctx.stroke();
     ctx.restore();
 }
@@ -245,7 +231,7 @@ startBtn.addEventListener("click", async () => {
         try { await DeviceMotionEvent.requestPermission(); } catch(e) {}
     }
     if (lastAcc) { baseGY = lastAcc.y || 0; baseGX = lastAcc.x || 0; }
-    initTrench(); gameRunning = true; startBtn.style.display = "none";
+    initGame(); gameRunning = true; startBtn.style.display = "none";
 });
 </script>
 </body>
