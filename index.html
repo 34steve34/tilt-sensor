@@ -271,8 +271,8 @@ startBtn.addEventListener("click", async () => {
     
     // 2. Calibrate baseline ONLY if sensors are active
     if (lastAcc) { 
-		baseGY = Number(lastAcc?.x) || 0; 
-		baseGX = Number(lastAcc?.y) || 0; 
+		baseGY = lastAcc?.x || 0;
+		baseGX = lastAcc?.y || 0;
     }
 
     // 3. START GAME (Moved outside the 'if' so it always works)
