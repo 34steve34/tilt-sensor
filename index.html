@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Space Slalom v34.0</title>
+<title>Space Slalom v34.1</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -18,7 +18,7 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="ui">SLALOM v34.0 | SPEED: <span id="thrust">0</span>%</div>
+<div id="ui">SLALOM v34.1 | SPEED: <span id="thrust">0</span>%</div>
 <button id="startBtn">ENGAGE SLALOM</button>
 
 <script>
@@ -40,7 +40,7 @@ const CONFIG = {
     driftFriction: 0.8,  
     rotFriction: 0.9,    
     speedBase: 0.08,      // Linear speed base
-    gateInterval: 40,     // Spaced out gates
+    gateInterval: 40,     // (unused by new system, kept for reference)
     maxZ: 100,            // Linear Z-depth
     gateSizeBase: 0.6,    // 60% of screen height
     gateAspect: 2.5
@@ -50,6 +50,11 @@ let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0, w: 60, h: 6
 let gates = []; 
 let stars = []; 
 let lastAcc = null;
+
+// *** NEW: simple state to control gate spacing
+let readyForNextGate = false;          // when true, we are allowed to spawn the next gate
+let gateCooldownFrames = 40;          // how many frames to wait AFTER a gate leaves before spawning next
+let gateCooldownCounter = 0;          // counts up during cooldown
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -99,13 +104,19 @@ function initGame() {
     gates = []; frameCount = 0; isPaused = false;
     ship.x = canvas.width / 2; ship.y = canvas.height / 2;
     ship.vx = 0; ship.vy = 0; ship.angle = -Math.PI/2; ship.vAngle = 0;
+
+    // *** NEW: reset spacing state, spawn ONE gate far ahead
+    readyForNextGate = false;
+    gateCooldownCounter = 0;
     spawnGate();
 }
 
 function update() {
     if (!gameRunning || isPaused) return;
     frameCount++;
-    if (frameCount % CONFIG.gateInterval === 0) spawnGate();
+
+    // *** REMOVED: frame-based spawning
+    // if (frameCount % CONFIG.gateInterval === 0) spawnGate();
 
     // Movement
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
@@ -146,7 +157,31 @@ function update() {
             g.passed = true;
         }
 
-        if (g.z < -5) gates.splice(i, 1);
+        // When gate is far behind the ship, remove it and start cooldown
+        if (g.z < -5) {
+            gates.splice(i, 1);
+
+            // *** NEW: Once the last visible gate is gone, start cooldown before next
+            if (gates.length === 0) {
+                readyForNextGate = false;
+                gateCooldownCounter = 0;
+            }
+        }
+    }
+
+    // *** NEW: handle cooldown and spawn next gate when the “lane” is clear
+    if (gates.length === 0) {
+        if (!readyForNextGate) {
+            gateCooldownCounter++;
+            if (gateCooldownCounter >= gateCooldownFrames) {
+                readyForNextGate = true;
+            }
+        } else {
+            // “One gate, then time to prepare, then the next”
+            spawnGate();
+            readyForNextGate = false;
+            gateCooldownCounter = 0;
+        }
     }
 }
 
