@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v27.0 – Landscape</title>
+<title>Trench Run v27.1 – Landscape</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -23,8 +23,8 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="ui">v27.0 | DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
-<div id="startScreen">Trench Run v27.0<br><small>Landscape Mode: Tilt to Steer</small></div>
+<div id="ui">v27.1 | DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
+<div id="startScreen">Trench Run v27.1<br><small>Landscape Mode: Tilt to Steer</small></div>
 <button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
@@ -39,26 +39,26 @@ let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
 let distance = 0, frameCount = 0;
 let speedMultiplier = 0.4;
-let calibrationCounter = 0;
 
 const CONFIG = {
     rotTorque: 0.0016, 
-    driftSens: 0.18,      // Slightly reduced for better control
-    driftFriction: 0.92,  // Reduced friction for smoother movement
+    driftSens: 0.18,      
+    driftFriction: 0.92,  
     rotFriction: 0.96,
     trenchSpeedBase: 0.007, 
     curveDrift: 180, 
     gateFrequency: 25,      
     maxZ: 5.0,
     visibleTrenchDepth: 5,
-    collisionZStart: 0.15,  // Start checking collision earlier
-    collisionZEnd: -0.1,    // Continue checking after passing
-    calibrationInterval: 180 // Recalibrate every 3 seconds (60fps * 3)
+    collisionZStart: 0.15,
+    collisionZEnd: -0.1,
+    gateWidthPct: 0.28,    // Reduced from 0.45 to make it harder
+    gateHeightPct: 0.28    // Reduced from 0.45 to make it harder
 };
 
 let ship = { 
     x: 0, y: 0, vx: 0, vy: 0, 
-    angle: 0,  // Fixed: start at 0 to match visual orientation
+    angle: -Math.PI/2,  // Restored original orientation
     vAngle: 0,
     w: 80, h: 8 
 };
@@ -111,14 +111,6 @@ window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
     if (!gameRunning || !lastAcc) return;
 
-    // Recalibrate periodically to handle device position changes
-    calibrationCounter++;
-    if (calibrationCounter >= CONFIG.calibrationInterval) {
-        baseGY = lastAcc.y || 0;
-        baseGX = lastAcc.x || 0;
-        calibrationCounter = 0;
-    }
-
     let rawX = (lastAcc.x || 0);
     let rawY = (lastAcc.y || 0);
 
@@ -138,9 +130,9 @@ function spawnGate(customZ) {
         z: customZ || CONFIG.maxZ, 
         cx: pathX, 
         cy: pathY, 
-        w: canvas.width * 0.45, 
-        h: canvas.height * 0.45,
-        passed: false  // Track if ship has passed this gate
+        w: canvas.width * CONFIG.gateWidthPct, 
+        h: canvas.height * CONFIG.gateHeightPct,
+        passed: false
     });
 }
 
@@ -149,17 +141,16 @@ function initTrench() {
     distance = 0;
     frameCount = 0;
     speedMultiplier = 0.4;
-    calibrationCounter = 0;
     ship.vx = 0;
     ship.vy = 0;
-    ship.angle = 0;  // Reset angle
+    ship.angle = -Math.PI/2;  // Reset to correct orientation
     ship.vAngle = 0;
     pathX = 0; 
     pathY = 0;
     
     // Spawn initial gates with proper spacing for slow start
     for(let i=1; i<=5; i++) {
-        spawnGate(i * 1.0);  // Increased spacing for slow startup
+        spawnGate(i * 1.0);
     }
 }
 
@@ -167,7 +158,7 @@ function update() {
     if (!gameRunning) return;
     
     // Gradual speed increase
-    if (speedMultiplier < 1.0) speedMultiplier += 0.0008; // Slower ramp-up
+    if (speedMultiplier < 1.0) speedMultiplier += 0.0008;
     let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
     distance += currentSpeed * 50;
     frameCount++;
@@ -222,11 +213,11 @@ function update() {
             
             // Use scaled gate dimensions for collision
             const scale = 0.05 + dPct * 2.5;
-            const gW = (canvas.width * 0.45) * scale;
-            const gH = (canvas.height * 0.45) * scale;
+            const gW = (canvas.width * CONFIG.gateWidthPct) * scale;
+            const gH = (canvas.height * CONFIG.gateHeightPct) * scale;
 
-            // Add tolerance for collision (10% margin)
-            const tolerance = 1.1;
+            // Collision check with small tolerance
+            const tolerance = 1.05;
             if (Math.abs(ship.x - cX) > (gW/2) * tolerance || 
                 Math.abs(ship.y - cY) > (gH/2) * tolerance) {
                 gameOver();
@@ -283,8 +274,8 @@ function draw() {
         let dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2); 
         let scale = 0.05 + dPct * 2.5; 
         
-        let sW = (canvas.width * 0.45) * scale; 
-        let sH = (canvas.height * 0.45) * scale;
+        let sW = (canvas.width * CONFIG.gateWidthPct) * scale; 
+        let sH = (canvas.height * CONFIG.gateHeightPct) * scale;
         let sX = mx + g.cx * dPct; 
         let sY = my + g.cy * dPct;
 
@@ -306,7 +297,8 @@ function draw() {
             let nPct = Math.pow(1 - (n.z / CONFIG.maxZ), 2);
             let nScale = 0.05 + nPct * 2.5;
             let nX = mx + n.cx * nPct, nY = my + n.cy * nPct;
-            let nW = (canvas.width * 0.45) * nScale, nH = (canvas.height * 0.45) * nScale;
+            let nW = (canvas.width * CONFIG.gateWidthPct) * nScale;
+            let nH = (canvas.height * CONFIG.gateHeightPct) * nScale;
 
             ctx.strokeStyle = `rgba(255, 140, 0, ${0.4 / (i + 1)})`;
             ctx.beginPath();
@@ -318,7 +310,7 @@ function draw() {
         }
     }
 
-    // Draw ship - now correctly oriented to match angle=0
+    // Draw ship - original orientation
     ctx.save();
     ctx.translate(ship.x, ship.y); 
     ctx.rotate(ship.angle);
@@ -327,7 +319,7 @@ function draw() {
     ctx.shadowBlur = 10; 
     ctx.shadowColor = "#00E676";
     ctx.beginPath();
-    ctx.moveTo(20, 0);  // Nose pointing right (angle=0)
+    ctx.moveTo(20, 0);
     ctx.lineTo(-10, -ship.w/2); 
     ctx.lineTo(-5, 0); 
     ctx.lineTo(-10, ship.w/2);
@@ -354,7 +346,7 @@ startBtn.addEventListener("click", async () => {
         }
     }
     
-    // Initial calibration
+    // ONE-TIME calibration only at start
     if (lastAcc) { 
         baseGY = lastAcc.y || 0; 
         baseGX = lastAcc.x || 0; 
