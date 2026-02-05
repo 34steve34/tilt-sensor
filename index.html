@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v26.3 – 2025</title>
+<title>Trench Run v26.3 – Landscape</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -24,7 +24,7 @@
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="ui">v26.3 | DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
-<div id="startScreen">Trench Run v26.3<br><small>Tap ENGAGE to start – tilt or tap sides to steer</small></div>
+<div id="startScreen">Trench Run v26.3<br><small>Landscape Mode: Tilt to Steer</small></div>
 <button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
@@ -38,12 +38,12 @@ let keyL = false, keyR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
 let distance = 0, frameCount = 0;
-let speedMultiplier = 0.4;  // Start higher for snappier feel
+let speedMultiplier = 0.4;
 
 const CONFIG = {
     rotTorque: 0.0016, 
-    driftSens: 0.15, 
-    driftFriction: 0.90, 
+    driftSens: 0.20,      // Slightly higher for landscape snappiness
+    driftFriction: 0.88,  // Higher friction to prevent sliding off
     rotFriction: 0.96,
     trenchSpeedBase: 0.007, 
     curveDrift: 180, 
@@ -103,8 +103,21 @@ window.addEventListener("keyup", (e) => {
 window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
     if (!gameRunning || !lastAcc) return;
-    tiltY = Math.max(-3, Math.min(3, (lastAcc.x || 0) - baseGX));
-    tiltX = Math.max(-3, Math.min(3, (lastAcc.y || 0) - baseGY));
+
+    // Landscape Orientation Logic:
+    // Device Y = Screen Horizontal
+    // Device X = Screen Vertical
+    let rawX = (lastAcc.x || 0);
+    let rawY = (lastAcc.y || 0);
+
+    const deadzone = 0.3;
+
+    // Horizontal Tilt (Y-axis)
+    tiltX = Math.abs(rawY) > deadzone ? (rawY - baseGY) : 0; 
+    
+    // Vertical Tilt (X-axis)
+    // Offset by ~6 to account for holding the phone at a 45-degree angle
+    tiltY = Math.abs(rawX) > deadzone ? (rawX - 6) : 0; 
 });
 
 // --- Gameplay Logic ---
@@ -124,7 +137,10 @@ function initTrench() {
     distance = 0;
     frameCount = 0;
     speedMultiplier = 0.4;
-    // Closer initial gates
+    ship.vx = 0;
+    ship.vy = 0;
+    // Reset path
+    pathX = 0; pathY = 0;
     for(let i=1; i<=5; i++) {
         spawnGate(i * 0.7);
     }
@@ -146,11 +162,22 @@ function update() {
     // Movement
     if (touchL || keyL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR || keyR) ship.vAngle += CONFIG.rotTorque;
-    ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
-    ship.vx += tiltX * CONFIG.driftSens; ship.vy += tiltY * CONFIG.driftSens;
-    ship.x += ship.vx; ship.y += ship.vy;
-    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
+    
+    ship.angle += ship.vAngle; 
+    ship.vAngle *= CONFIG.rotFriction;
 
+    // Apply tilt to velocity
+    ship.vx += tiltX * CONFIG.driftSens; 
+    ship.vy += tiltY * CONFIG.driftSens;
+
+    ship.x += ship.vx; 
+    ship.y += ship.vy;
+
+    // Apply friction to stop sliding
+    ship.vx *= CONFIG.driftFriction; 
+    ship.vy *= CONFIG.driftFriction;
+
+    // Bounds
     ship.x = Math.max(20, Math.min(canvas.width - 20, ship.x));
     ship.y = Math.max(20, Math.min(canvas.height - 20, ship.y));
 
@@ -221,7 +248,7 @@ function draw() {
         let alpha = Math.min(1, dPct * 1.5);
         
         ctx.strokeStyle = isNearest ? `rgba(255, 255, 255, ${alpha})` : `rgba(0, 230, 118, ${alpha * 0.5})`;
-        ctx.lineWidth = isNearest ? 4 : 1;  // Brighter nearest
+        ctx.lineWidth = isNearest ? 4 : 1; 
         ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
 
         if (i < CONFIG.visibleTrenchDepth && i < gates.length - 1) {
@@ -261,13 +288,14 @@ startBtn.addEventListener("click", async () => {
         try { 
             await DeviceMotionEvent.requestPermission(); 
         } catch(e) { 
-            console.log("Sensor permission denied or not supported");
+            console.log("Sensor permission denied");
         }
     }
     
+    // Baseline calibration for current device tilt
     if (lastAcc) { 
-        baseGY = lastAcc.x || 0; 
-        baseGX = lastAcc.y || 0; 
+        baseGY = lastAcc.y || 0; 
+        baseGX = lastAcc.x || 0; 
     }
 
     initTrench(); 
