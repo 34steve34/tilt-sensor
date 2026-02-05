@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v27.2 – Landscape</title>
+<title>Trench Run v28.5 – Simulation Mode</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -23,10 +23,11 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="ui">v27.2 | DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
-<div id="startScreen">Trench Run v27.2<br><small>Landscape Mode: Tilt to Steer</small></div>
+<div id="ui">v28.5 SIM | DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
+<div id="startScreen">TRENCH RUN: SIMULATION<br><small>Landscape: Tilt to Drift, Tap sides to Roll</small></div>
 <button id="startBtn">ENGAGE ENGINES</button>
 
+<script>
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
@@ -38,27 +39,27 @@ let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
 let distance = 0, frameCount = 0;
 let speedMultiplier = 0.4;
-let globalRoll = 0; // The target rotation of the trench
+let globalRoll = 0;
 
 const CONFIG = {
-    rotTorque: 0.04,      // Increased for snappier ship rotation
+    rotTorque: 0.045,      
     driftSens: 0.22,      
-    driftFriction: 0.90,  
-    rotFriction: 0.92,
+    driftFriction: 0.91,  
+    rotFriction: 0.93,
     trenchSpeedBase: 0.007, 
-    curveDrift: 200, 
+    curveDrift: 220, 
     gateFrequency: 25,      
     maxZ: 5.0,
-    visibleTrenchDepth: 8, // Increased depth
+    visibleTrenchDepth: 8,
     collisionZStart: 0.15,
     collisionZEnd: -0.1,
-    gateWidthPct: 0.35,    // Slightly wider for roll room
-    gateHeightPct: 0.22,   // Thinner height makes rotation critical
+    gateWidthPct: 0.38,    
+    gateHeightPct: 0.25,   
 };
 
 let ship = { 
     x: 0, y: 0, vx: 0, vy: 0, 
-    angle: 0, // Starts at 0 now
+    angle: 0, 
     vAngle: 0,
     w: 60, h: 10 
 };
@@ -119,9 +120,7 @@ window.addEventListener("devicemotion", (e) => {
 // --- Gameplay Logic ---
 
 function spawnGate(customZ) {
-    // Trench rotates slowly over time
-    globalRoll += (Math.random() - 0.5) * 0.5;
-    
+    globalRoll += (Math.random() - 0.5) * 0.7; // Randomly twist the trench
     gates.push({ 
         z: customZ || CONFIG.maxZ, 
         cx: pathX, 
@@ -143,7 +142,7 @@ function initTrench() {
 function update() {
     if (!gameRunning) return;
     
-    if (speedMultiplier < 1.2) speedMultiplier += 0.0005;
+    if (speedMultiplier < 1.3) speedMultiplier += 0.0006;
     let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
     distance += currentSpeed * 50;
     frameCount++;
@@ -153,7 +152,7 @@ function update() {
 
     if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
 
-    // Rotation controls (Pilot must match gate roll)
+    // Rotation
     if (touchL || keyL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR || keyR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle; 
@@ -165,7 +164,6 @@ function update() {
     ship.x += ship.vx; ship.y += ship.vy;
     ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
 
-    // Bounds
     ship.x = Math.max(20, Math.min(canvas.width - 20, ship.x));
     ship.y = Math.max(20, Math.min(canvas.height - 20, ship.y));
 
@@ -178,54 +176,43 @@ function update() {
         let g = gates[i];
         g.z -= currentSpeed;
         
-        // Collision detection with Rotation
+        // --- SIMULATION COLLISION MATH ---
         if (!g.passed && g.z <= CONFIG.collisionZStart && g.z >= CONFIG.collisionZEnd) {
             const dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2);
             const cX = (canvas.width / 2) + g.cx * dPct;
             const cY = (canvas.height / 2) + g.cy * dPct;
             
-            // Transform ship position relative to gate rotation
+            // Relative position from ship center to gate center
             let dx = ship.x - cX;
             let dy = ship.y - cY;
             
-            // Rotate ship's relative position by the inverse of the gate's roll
+            // Rotate the ship center point by the inverse of the gate's roll
             let rx = dx * Math.cos(-g.roll) - dy * Math.sin(-g.roll);
             let ry = dx * Math.sin(-g.roll) + dy * Math.cos(-g.roll);
             
-            // Rotate ship's angle relative to gate
-            let relativeAngle = (ship.angle - g.roll) % (Math.PI);
-            // Normalize angle to -PI/2 to PI/2
-            if (relativeAngle > Math.PI/2) relativeAngle -= Math.PI;
-            if (relativeAngle < -Math.PI/2) relativeAngle += Math.PI;
+            // Angle of the ship relative to the gate
+            let relAngle = ship.angle - g.roll;
 
             const gW = (canvas.width * CONFIG.gateWidthPct) * (0.05 + dPct * 2.5);
             const gH = (canvas.height * CONFIG.gateHeightPct) * (0.05 + dPct * 2.5);
 
+            // Simulation Check: Inspect the 4 corners of the ship
+            let hitWall = false;
+            let sw = ship.w/2, sh = ship.h/2;
+            let corners = [[-sw, -sh], [sw, -sh], [sw, sh], [-sw, sh]];
 
-            // Calculate ship's "Wing Extents" based on its current rotation relative to the gate
-		let shipHalfWidth = ship.w / 2;
-		let shipHalfHeight = ship.h / 2;
+            for(let p of corners) {
+                // Rotate corner by ship's relative angle
+                let cx = rx + (p[0] * Math.cos(relAngle) - p[1] * Math.sin(relAngle));
+                let cy = ry + (p[0] * Math.sin(relAngle) + p[1] * Math.cos(relAngle));
 
-			// Check the four corners of your ship against the gate's boundaries
-			let hitWall = false;
-[[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sy]) => {
-    // Ship corner relative to ship center
-    let cornerX = sx * shipHalfWidth;
-    let cornerY = sy * shipHalfHeight;
-
-    // Rotate ship corner by ship's relative angle to the gate
-    let finalRX = rx + (cornerX * Math.cos(relativeAngle) - cornerY * Math.sin(relativeAngle));
-    let finalRY = ry + (cornerX * Math.sin(relativeAngle) + cornerY * Math.cos(relativeAngle));
-
-    if (Math.abs(finalRX) > gW/2 || Math.abs(finalRY) > gH/2) {
-        hitWall = true;
-    }
-});
-
-if (hitWall) {
-    gameOver();
-}
+                // If ANY corner is outside the rectangle, crash!
+                if (Math.abs(cx) > gW/2 || Math.abs(cy) > gH/2) {
+                    hitWall = true; break;
+                }
             }
+
+            if (hitWall) { gameOver(); return; }
         }
         if (g.z < CONFIG.collisionZEnd) g.passed = true;
         if (g.z <= -0.5) gates.splice(i, 1);
@@ -239,64 +226,54 @@ function gameOver() {
     gameRunning = false;
     ctx.fillStyle = "rgba(255, 0, 0, 0.6)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    setTimeout(() => { startBtn.style.display = "block"; }, 500);
+    setTimeout(() => { 
+        startBtn.style.display = "block";
+        document.getElementById("startScreen").style.display = "block";
+    }, 500);
 }
 
 function draw() {
-    ctx.fillStyle = "#000"; 
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
-
     const mx = canvas.width / 2, my = canvas.height / 2;
 
     // Stars
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
     stars.forEach(s => {
         let sz = Math.pow(1 - (s.z / CONFIG.maxZ), 2);
-        ctx.beginPath();
-        ctx.arc(mx + s.x * sz, my + s.y * sz, 1 * sz, 0, Math.PI*2);
-        ctx.stroke();
+        ctx.strokeRect(mx + s.x * sz, my + s.y * sz, 1, 1);
     });
 
-    // Draw gates and trench lines
+    // Gates & Tunnel
     for (let i = gates.length - 1; i >= 0; i--) {
         let g = gates[i];
         let dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2); 
         let scale = 0.05 + dPct * 2.5; 
         let sW = (canvas.width * CONFIG.gateWidthPct) * scale; 
         let sH = (canvas.height * CONFIG.gateHeightPct) * scale;
-        let sX = mx + g.cx * dPct; 
-        let sY = my + g.cy * dPct;
+        let sX = mx + g.cx * dPct; let sY = my + g.cy * dPct;
 
         ctx.save();
-        ctx.translate(sX, sY);
-        ctx.rotate(g.roll);
-        
+        ctx.translate(sX, sY); ctx.rotate(g.roll);
         ctx.strokeStyle = i === 0 ? "#fff" : `rgba(0, 230, 118, ${0.8 - (i*0.1)})`;
         ctx.lineWidth = i === 0 ? 5 : 2;
         ctx.strokeRect(-sW/2, -sH/2, sW, sH);
         
-        // Add "Grid lines" inside the gate for depth
+        // Depth lines
         ctx.strokeStyle = `rgba(0, 230, 118, 0.1)`;
         ctx.beginPath();
-        for(let j=-2; j<=2; j++) {
-            ctx.moveTo(j*(sW/4), -sH/2); ctx.lineTo(j*(sW/4), sH/2);
-        }
+        for(let j=-1; j<=1; j++) { ctx.moveTo(j*(sW/3), -sH/2); ctx.lineTo(j*(sW/3), sH/2); }
         ctx.stroke();
-        
         ctx.restore();
 
-        // Connect corners for the "Trench" feel
+        // Connecting the tunnel corners
         if (i < gates.length - 1) {
             let n = gates[i+1];
             let nPct = Math.pow(1 - (n.z / CONFIG.maxZ), 2);
             let nScale = 0.05 + nPct * 2.5;
-            let nX = mx + n.cx * nPct, nY = my + n.cy * nPct;
             let nW = (canvas.width * CONFIG.gateWidthPct) * nScale, nH = (canvas.height * CONFIG.gateHeightPct) * nScale;
+            let nX = mx + n.cx * nPct, nY = my + n.cy * nPct;
 
-            ctx.strokeStyle = `rgba(0, 100, 50, ${0.3 / (i + 1)})`;
-            
-            // Helper to get rotated corner points
             const getCorners = (x, y, w, h, r) => [
                 {x: x + (-w/2)*Math.cos(r) - (-h/2)*Math.sin(r), y: y + (-w/2)*Math.sin(r) + (-h/2)*Math.cos(r)},
                 {x: x + (w/2)*Math.cos(r) - (-h/2)*Math.sin(r), y: y + (w/2)*Math.sin(r) + (-h/2)*Math.cos(r)},
@@ -307,31 +284,23 @@ function draw() {
             let c1 = getCorners(sX, sY, sW, sH, g.roll);
             let c2 = getCorners(nX, nY, nW, nH, n.roll);
 
+            ctx.strokeStyle = `rgba(0, 150, 80, ${0.2 / (i + 1)})`;
             ctx.beginPath();
-            for(let k=0; k<4; k++) {
-                ctx.moveTo(c1[k].x, c1[k].y);
-                ctx.lineTo(c2[k].x, c2[k].y);
-            }
+            for(let k=0; k<4; k++) { ctx.moveTo(c1[k].x, c1[k].y); ctx.lineTo(c2[k].x, c2[k].y); }
             ctx.stroke();
         }
     }
 
-    // Ship
+    // X-Wing Style Ship
     ctx.save();
-    ctx.translate(ship.x, ship.y); 
-    ctx.rotate(ship.angle);
-    ctx.strokeStyle = "#fff"; 
-    ctx.lineWidth = 3;
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = "#00E676";
-    // X-Wing style
+    ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.shadowBlur = 15; ctx.shadowColor = "#00E676";
     ctx.beginPath();
-    ctx.moveTo(20, 0); 
-    ctx.lineTo(-10, -30); ctx.lineTo(-10, 30);
+    ctx.moveTo(25, 0); // Nose
+    ctx.lineTo(-10, -ship.w/2); ctx.lineTo(-5, 0); ctx.lineTo(-10, ship.w/2);
     ctx.closePath(); ctx.stroke();
     // Engine Glow
-    ctx.fillStyle = "#00E676";
-    ctx.fillRect(-15, -15, 5, 30);
+    ctx.fillStyle = "#00E676"; ctx.fillRect(-15, -12, 5, 24);
     ctx.restore();
 }
 
@@ -344,433 +313,6 @@ startBtn.addEventListener("click", async () => {
     }
     if (lastAcc) { baseGY = lastAcc.y || 0; baseGX = lastAcc.x || 0; }
     initTrench(); gameRunning = true; startBtn.style.display = "none"; document.getElementById("startScreen").style.display = "none";
-});
-const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
-const startBtn = document.getElementById("startBtn");
-
-let gameRunning = false;
-let touchL = false, touchR = false;
-let keyL = false, keyR = false;
-let tiltX = 0, tiltY = 0;
-let baseGX = 0, baseGY = 0;
-let distance = 0, frameCount = 0;
-let speedMultiplier = 0.4;
-
-const CONFIG = {
-    rotTorque: 0.0016, 
-    driftSens: 0.18,      
-    driftFriction: 0.92,  
-    rotFriction: 0.96,
-    trenchSpeedBase: 0.007, 
-    curveDrift: 180, 
-    gateFrequency: 25,      
-    maxZ: 5.0,
-    visibleTrenchDepth: 5,
-    collisionZStart: 0.15,
-    collisionZEnd: -0.1,
-    gateWidthPct: 0.28,
-    gateHeightPct: 0.28,
-    dangerZoneZ: 0.3,  // When danger zone becomes visible
-    edgeWarningThreshold: 0.7  // % of gate size before edge warning
-};
-
-let ship = { 
-    x: 0, y: 0, vx: 0, vy: 0, 
-    angle: -Math.PI/2,
-    vAngle: 0,
-    w: 120, h: 12  // Wider ship (was 80, 8)
-};
-
-let gates = []; 
-let stars = []; 
-let pathX = 0, pathY = 0; 
-let lastAcc = null;
-let edgeWarning = { active: false, intensity: 0 };
-
-function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    ship.x = canvas.width / 2; 
-    ship.y = canvas.height / 2;
-    initStars();
-}
-
-function initStars() {
-    stars = [];
-    for(let i=0; i<80; i++) {  // More stars for brightness
-        stars.push({
-            x: Math.random() * canvas.width - canvas.width/2,
-            y: Math.random() * canvas.height - canvas.height/2,
-            z: Math.random() * CONFIG.maxZ
-        });
-    }
-}
-
-window.addEventListener("resize", resize);
-resize();
-
-// --- Input Management ---
-
-window.addEventListener("touchstart", (e) => {
-    if (!gameRunning) return;
-    for(let t of e.touches) (t.clientX < canvas.width/2) ? touchL = true : touchR = true;
-});
-window.addEventListener("touchend", () => { touchL = false; touchR = false; });
-
-window.addEventListener("keydown", (e) => {
-    if(e.key === "ArrowLeft") keyL = true;
-    if(e.key === "ArrowRight") keyR = true;
-});
-window.addEventListener("keyup", (e) => {
-    if(e.key === "ArrowLeft") keyL = false;
-    if(e.key === "ArrowRight") keyR = false;
-});
-
-window.addEventListener("devicemotion", (e) => {
-    lastAcc = e.accelerationIncludingGravity;
-    if (!gameRunning || !lastAcc) return;
-
-    let rawX = (lastAcc.x || 0);
-    let rawY = (lastAcc.y || 0);
-
-    const deadzone = 0.3;
-
-    tiltX = Math.abs(rawY) > deadzone ? (rawY - baseGY) : 0; 
-    tiltY = Math.abs(rawX) > deadzone ? (rawX - 6) : 0; 
-});
-
-// --- Gameplay Logic ---
-
-function spawnGate(customZ) {
-    gates.push({ 
-        z: customZ || CONFIG.maxZ, 
-        cx: pathX, 
-        cy: pathY, 
-        w: canvas.width * CONFIG.gateWidthPct, 
-        h: canvas.height * CONFIG.gateHeightPct,
-        passed: false
-    });
-}
-
-function initTrench() {
-    gates = [];
-    distance = 0;
-    frameCount = 0;
-    speedMultiplier = 0.4;
-    ship.vx = 0;
-    ship.vy = 0;
-    ship.angle = -Math.PI/2;
-    ship.vAngle = 0;
-    pathX = 0; 
-    pathY = 0;
-    edgeWarning = { active: false, intensity: 0 };
-    
-    for(let i=1; i<=5; i++) {
-        spawnGate(i * 1.0);
-    }
-}
-
-function getGateColor(gate, isNearest) {
-    if (gate.passed) {
-        return `rgba(0, 230, 118, 0.4)`;  // Dim green for passed
-    }
-    
-    // Color shift based on Z distance
-    let z = gate.z;
-    
-    if (z > CONFIG.dangerZoneZ) {
-        // Far away - cyan/blue
-        return `rgba(0, 200, 255, 0.6)`;
-    } else if (z > CONFIG.collisionZStart) {
-        // Approaching - green to yellow
-        let t = 1 - ((z - CONFIG.collisionZStart) / (CONFIG.dangerZoneZ - CONFIG.collisionZStart));
-        let r = Math.floor(0 + t * 255);
-        let g = Math.floor(230 - t * 25);
-        let b = Math.floor(118 - t * 118);
-        return `rgba(${r}, ${g}, ${b}, 0.8)`;
-    } else if (z >= CONFIG.collisionZEnd) {
-        // In danger zone - yellow to red
-        let t = 1 - ((z - CONFIG.collisionZEnd) / (CONFIG.collisionZStart - CONFIG.collisionZEnd));
-        let r = 255;
-        let g = Math.floor(230 - t * 230);
-        let b = 0;
-        return `rgba(${r}, ${g}, ${b}, 1.0)`;
-    } else {
-        // Behind - dim green
-        return `rgba(0, 230, 118, 0.3)`;
-    }
-}
-
-function update() {
-    if (!gameRunning) return;
-    
-    if (speedMultiplier < 1.0) speedMultiplier += 0.0008;
-    let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
-    distance += currentSpeed * 50;
-    frameCount++;
-
-    pathX = Math.sin(frameCount * 0.012) * CONFIG.curveDrift;
-    pathY = Math.cos(frameCount * 0.008) * (CONFIG.curveDrift * 0.4);
-
-    let adjustedFrequency = Math.floor(CONFIG.gateFrequency / speedMultiplier);
-    if (frameCount % adjustedFrequency === 0) spawnGate();
-
-    // Movement
-    if (touchL || keyL) ship.vAngle -= CONFIG.rotTorque;
-    if (touchR || keyR) ship.vAngle += CONFIG.rotTorque;
-    
-    ship.angle += ship.vAngle; 
-    ship.vAngle *= CONFIG.rotFriction;
-
-    ship.vx += tiltX * CONFIG.driftSens; 
-    ship.vy += tiltY * CONFIG.driftSens;
-
-    ship.x += ship.vx; 
-    ship.y += ship.vy;
-
-    ship.vx *= CONFIG.driftFriction; 
-    ship.vy *= CONFIG.driftFriction;
-
-    ship.x = Math.max(20, Math.min(canvas.width - 20, ship.x));
-    ship.y = Math.max(20, Math.min(canvas.height - 20, ship.y));
-
-    stars.forEach(s => {
-        s.z -= currentSpeed * 2;
-        if(s.z <= 0) s.z = CONFIG.maxZ;
-    });
-
-    // Reset edge warning
-    edgeWarning.active = false;
-    edgeWarning.intensity = 0;
-
-    // Update and check gates
-    for (let i = gates.length - 1; i >= 0; i--) {
-        let g = gates[i];
-        g.z -= currentSpeed;
-        
-        // Check edge warning for nearest gate in danger zone
-        if (i === 0 && g.z <= CONFIG.dangerZoneZ && g.z >= CONFIG.collisionZEnd && !g.passed) {
-            const dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2);
-            const cX = (canvas.width / 2) + g.cx * dPct;
-            const cY = (canvas.height / 2) + g.cy * dPct;
-            
-            const scale = 0.05 + dPct * 2.5;
-            const gW = (canvas.width * CONFIG.gateWidthPct) * scale;
-            const gH = (canvas.height * CONFIG.gateHeightPct) * scale;
-
-            // Calculate how far off-center we are (0 = centered, 1 = at edge)
-            let offsetX = Math.abs(ship.x - cX) / (gW/2);
-            let offsetY = Math.abs(ship.y - cY) / (gH/2);
-            let maxOffset = Math.max(offsetX, offsetY);
-
-            if (maxOffset > CONFIG.edgeWarningThreshold) {
-                edgeWarning.active = true;
-                edgeWarning.intensity = Math.min(1, (maxOffset - CONFIG.edgeWarningThreshold) / (1 - CONFIG.edgeWarningThreshold));
-            }
-        }
-        
-        // Collision detection
-        if (!g.passed && g.z <= CONFIG.collisionZStart && g.z >= CONFIG.collisionZEnd) {
-            const dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2);
-            const cX = (canvas.width / 2) + g.cx * dPct;
-            const cY = (canvas.height / 2) + g.cy * dPct;
-            
-            const scale = 0.05 + dPct * 2.5;
-            const gW = (canvas.width * CONFIG.gateWidthPct) * scale;
-            const gH = (canvas.height * CONFIG.gateHeightPct) * scale;
-
-            const tolerance = 1.05;
-            if (Math.abs(ship.x - cX) > (gW/2) * tolerance || 
-                Math.abs(ship.y - cY) > (gH/2) * tolerance) {
-                gameOver();
-                return;
-            }
-        }
-        
-        if (g.z < CONFIG.collisionZEnd) {
-            g.passed = true;
-        }
-        
-        if (g.z <= -0.5) gates.splice(i, 1);
-    }
-
-    document.getElementById("dist").innerText = Math.floor(distance);
-    document.getElementById("thrust").innerText = Math.floor(speedMultiplier * 100);
-}
-
-function gameOver() {
-    gameRunning = false;
-    ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    setTimeout(() => { 
-        startBtn.style.display = "block";
-        startBtn.innerText = "RETRY MISSION";
-        document.getElementById("startScreen").style.display = "block";
-    }, 500);
-}
-
-function draw() {
-    ctx.fillStyle = "#000"; 
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    if (!gameRunning) return;
-
-    const mx = canvas.width / 2, my = canvas.height / 2;
-
-    // Draw edge warning glow
-    if (edgeWarning.active) {
-        let intensity = edgeWarning.intensity;
-        ctx.fillStyle = `rgba(255, 50, 50, ${intensity * 0.15})`;
-        
-        // Vignette effect
-        let gradient = ctx.createRadialGradient(mx, my, canvas.width * 0.3, mx, my, canvas.width * 0.7);
-        gradient.addColorStop(0, 'rgba(255, 50, 50, 0)');
-        gradient.addColorStop(1, `rgba(255, 50, 50, ${intensity * 0.3})`);
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-
-    // Draw stars (brighter)
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";  // Increased from 0.2
-    ctx.lineWidth = 1.5;
-    stars.forEach(s => {
-        let sz = Math.pow(1 - (s.z / CONFIG.maxZ), 2);
-        let sx = mx + s.x * sz; 
-        let sy = my + s.y * sz;
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + (s.x * 0.08), sy + (s.y * 0.08));
-        ctx.stroke();
-    });
-
-    // Draw target reticle for next gate
-    if (gates.length > 0) {
-        let nextGate = gates[0];
-        if (nextGate.z > CONFIG.collisionZEnd && !nextGate.passed) {
-            let dPct = Math.pow(1 - (nextGate.z / CONFIG.maxZ), 2);
-            let targetX = mx + nextGate.cx * dPct;
-            let targetY = my + nextGate.cy * dPct;
-            
-            // Pulsing reticle
-            let pulse = 0.8 + Math.sin(frameCount * 0.1) * 0.2;
-            let reticleSize = 15 * pulse;
-            
-            ctx.strokeStyle = `rgba(0, 255, 200, 0.6)`;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(targetX, targetY, reticleSize, 0, Math.PI * 2);
-            ctx.stroke();
-            
-            // Crosshair
-            ctx.beginPath();
-            ctx.moveTo(targetX - reticleSize - 5, targetY);
-            ctx.lineTo(targetX - reticleSize, targetY);
-            ctx.moveTo(targetX + reticleSize, targetY);
-            ctx.lineTo(targetX + reticleSize + 5, targetY);
-            ctx.moveTo(targetX, targetY - reticleSize - 5);
-            ctx.lineTo(targetX, targetY - reticleSize);
-            ctx.moveTo(targetX, targetY + reticleSize);
-            ctx.lineTo(targetX, targetY + reticleSize + 5);
-            ctx.stroke();
-        }
-    }
-
-    // Draw danger zone visualization
-    if (gates.length > 0 && gates[0].z <= CONFIG.dangerZoneZ && gates[0].z >= CONFIG.collisionZEnd) {
-        let g = gates[0];
-        let zNorm = (g.z - CONFIG.collisionZEnd) / (CONFIG.dangerZoneZ - CONFIG.collisionZEnd);
-        
-        // Draw a plane sweeping toward player
-        ctx.strokeStyle = `rgba(255, 100, 0, ${0.3 * (1 - zNorm)})`;
-        ctx.lineWidth = 2;
-        
-        let planeSize = canvas.width * 0.6 * (1 - zNorm);
-        ctx.strokeRect(mx - planeSize/2, my - planeSize/2, planeSize, planeSize);
-    }
-
-    // Draw gates
-    for (let i = gates.length - 1; i >= 0; i--) {
-        let g = gates[i];
-        let dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2); 
-        let scale = 0.05 + dPct * 2.5; 
-        
-        let sW = (canvas.width * CONFIG.gateWidthPct) * scale; 
-        let sH = (canvas.height * CONFIG.gateHeightPct) * scale;
-        let sX = mx + g.cx * dPct; 
-        let sY = my + g.cy * dPct;
-
-        let isNearest = (i === 0);
-        let color = getGateColor(g, isNearest);
-        
-        ctx.strokeStyle = color;
-        ctx.lineWidth = isNearest ? 4 : 2;  // Thicker lines
-        ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
-
-        // Draw trench walls (brighter)
-        if (i < CONFIG.visibleTrenchDepth && i < gates.length - 1) {
-            let n = gates[i+1];
-            let nPct = Math.pow(1 - (n.z / CONFIG.maxZ), 2);
-            let nScale = 0.05 + nPct * 2.5;
-            let nX = mx + n.cx * nPct, nY = my + n.cy * nPct;
-            let nW = (canvas.width * CONFIG.gateWidthPct) * nScale;
-            let nH = (canvas.height * CONFIG.gateHeightPct) * nScale;
-
-            ctx.strokeStyle = `rgba(255, 180, 50, ${0.5 / (i + 1)})`;  // Brighter walls
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(sX-sW/2, sY-sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
-            ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY-nH/2);
-            ctx.moveTo(sX-sW/2, sY+sH/2); ctx.lineTo(nX-nW/2, nY+nH/2);
-            ctx.moveTo(sX+sW/2, sY+sH/2); ctx.lineTo(nX+nW/2, nY+nH/2);
-            ctx.stroke();
-        }
-    }
-
-    // Draw ship (wider and brighter)
-    ctx.save();
-    ctx.translate(ship.x, ship.y); 
-    ctx.rotate(ship.angle);
-    ctx.strokeStyle = "#fff"; 
-    ctx.lineWidth = 3;  // Thicker outline
-    ctx.shadowBlur = 15;  // More glow
-    ctx.shadowColor = "#00E676";
-    ctx.beginPath();
-    ctx.moveTo(25, 0);  // Longer nose
-    ctx.lineTo(-15, -ship.w/2); 
-    ctx.lineTo(-8, 0); 
-    ctx.lineTo(-15, ship.w/2);
-    ctx.closePath(); 
-    ctx.stroke();
-    ctx.fillStyle = "#00E676"; 
-    ctx.fillRect(-18, -12, 4, 24);  // Wider engines
-    ctx.restore();
-}
-
-function loop() { 
-    update(); 
-    draw(); 
-    requestAnimationFrame(loop); 
-}
-loop();
-
-startBtn.addEventListener("click", async () => {
-    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        try { 
-            await DeviceMotionEvent.requestPermission(); 
-        } catch(e) { 
-            console.log("Sensor permission denied");
-        }
-    }
-    
-    if (lastAcc) { 
-        baseGY = lastAcc.y || 0; 
-        baseGX = lastAcc.x || 0; 
-    }
-
-    initTrench(); 
-    gameRunning = true; 
-    startBtn.style.display = "none"; 
-    document.getElementById("startScreen").style.display = "none";
 });
 </script>
 </body>
