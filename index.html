@@ -27,7 +27,324 @@
 <div id="startScreen">Trench Run v27.2<br><small>Landscape Mode: Tilt to Steer</small></div>
 <button id="startBtn">ENGAGE ENGINES</button>
 
-<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+const startBtn = document.getElementById("startBtn");
+
+let gameRunning = false;
+let touchL = false, touchR = false;
+let keyL = false, keyR = false;
+let tiltX = 0, tiltY = 0;
+let baseGX = 0, baseGY = 0;
+let distance = 0, frameCount = 0;
+let speedMultiplier = 0.4;
+let globalRoll = 0; // The target rotation of the trench
+
+const CONFIG = {
+    rotTorque: 0.04,      // Increased for snappier ship rotation
+    driftSens: 0.22,      
+    driftFriction: 0.90,  
+    rotFriction: 0.92,
+    trenchSpeedBase: 0.007, 
+    curveDrift: 200, 
+    gateFrequency: 25,      
+    maxZ: 5.0,
+    visibleTrenchDepth: 8, // Increased depth
+    collisionZStart: 0.15,
+    collisionZEnd: -0.1,
+    gateWidthPct: 0.35,    // Slightly wider for roll room
+    gateHeightPct: 0.22,   // Thinner height makes rotation critical
+};
+
+let ship = { 
+    x: 0, y: 0, vx: 0, vy: 0, 
+    angle: 0, // Starts at 0 now
+    vAngle: 0,
+    w: 60, h: 10 
+};
+
+let gates = []; 
+let stars = []; 
+let pathX = 0, pathY = 0; 
+let lastAcc = null;
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    ship.x = canvas.width / 2; 
+    ship.y = canvas.height / 2;
+    initStars();
+}
+
+function initStars() {
+    stars = [];
+    for(let i=0; i<100; i++) {
+        stars.push({
+            x: Math.random() * canvas.width * 2 - canvas.width,
+            y: Math.random() * canvas.height * 2 - canvas.height,
+            z: Math.random() * CONFIG.maxZ
+        });
+    }
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+// --- Input Management ---
+window.addEventListener("touchstart", (e) => {
+    if (!gameRunning) return;
+    for(let t of e.touches) (t.clientX < canvas.width/2) ? touchL = true : touchR = true;
+});
+window.addEventListener("touchend", () => { touchL = false; touchR = false; });
+
+window.addEventListener("keydown", (e) => {
+    if(e.key === "ArrowLeft") keyL = true;
+    if(e.key === "ArrowRight") keyR = true;
+});
+window.addEventListener("keyup", (e) => {
+    if(e.key === "ArrowLeft") keyL = false;
+    if(e.key === "ArrowRight") keyR = false;
+});
+
+window.addEventListener("devicemotion", (e) => {
+    lastAcc = e.accelerationIncludingGravity;
+    if (!gameRunning || !lastAcc) return;
+    let rawX = (lastAcc.x || 0);
+    let rawY = (lastAcc.y || 0);
+    const deadzone = 0.3;
+    tiltX = Math.abs(rawY) > deadzone ? (rawY - baseGY) : 0; 
+    tiltY = Math.abs(rawX) > deadzone ? (rawX - 6) : 0; 
+});
+
+// --- Gameplay Logic ---
+
+function spawnGate(customZ) {
+    // Trench rotates slowly over time
+    globalRoll += (Math.random() - 0.5) * 0.5;
+    
+    gates.push({ 
+        z: customZ || CONFIG.maxZ, 
+        cx: pathX, 
+        cy: pathY, 
+        w: canvas.width * CONFIG.gateWidthPct, 
+        h: canvas.height * CONFIG.gateHeightPct,
+        roll: globalRoll, 
+        passed: false
+    });
+}
+
+function initTrench() {
+    gates = []; distance = 0; frameCount = 0; speedMultiplier = 0.4;
+    ship.vx = 0; ship.vy = 0; ship.angle = 0; ship.vAngle = 0;
+    pathX = 0; pathY = 0; globalRoll = 0;
+    for(let i=1; i<=6; i++) spawnGate(i * 0.8);
+}
+
+function update() {
+    if (!gameRunning) return;
+    
+    if (speedMultiplier < 1.2) speedMultiplier += 0.0005;
+    let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
+    distance += currentSpeed * 50;
+    frameCount++;
+
+    pathX = Math.sin(frameCount * 0.01) * CONFIG.curveDrift;
+    pathY = Math.cos(frameCount * 0.007) * (CONFIG.curveDrift * 0.3);
+
+    if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
+
+    // Rotation controls (Pilot must match gate roll)
+    if (touchL || keyL) ship.vAngle -= CONFIG.rotTorque;
+    if (touchR || keyR) ship.vAngle += CONFIG.rotTorque;
+    ship.angle += ship.vAngle; 
+    ship.vAngle *= CONFIG.rotFriction;
+
+    // Movement
+    ship.vx += tiltX * CONFIG.driftSens; 
+    ship.vy += tiltY * CONFIG.driftSens;
+    ship.x += ship.vx; ship.y += ship.vy;
+    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
+
+    // Bounds
+    ship.x = Math.max(20, Math.min(canvas.width - 20, ship.x));
+    ship.y = Math.max(20, Math.min(canvas.height - 20, ship.y));
+
+    stars.forEach(s => {
+        s.z -= currentSpeed * 2;
+        if(s.z <= 0) s.z = CONFIG.maxZ;
+    });
+
+    for (let i = gates.length - 1; i >= 0; i--) {
+        let g = gates[i];
+        g.z -= currentSpeed;
+        
+        // Collision detection with Rotation
+        if (!g.passed && g.z <= CONFIG.collisionZStart && g.z >= CONFIG.collisionZEnd) {
+            const dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2);
+            const cX = (canvas.width / 2) + g.cx * dPct;
+            const cY = (canvas.height / 2) + g.cy * dPct;
+            
+            // Transform ship position relative to gate rotation
+            let dx = ship.x - cX;
+            let dy = ship.y - cY;
+            
+            // Rotate ship's relative position by the inverse of the gate's roll
+            let rx = dx * Math.cos(-g.roll) - dy * Math.sin(-g.roll);
+            let ry = dx * Math.sin(-g.roll) + dy * Math.cos(-g.roll);
+            
+            // Rotate ship's angle relative to gate
+            let relativeAngle = (ship.angle - g.roll) % (Math.PI);
+            // Normalize angle to -PI/2 to PI/2
+            if (relativeAngle > Math.PI/2) relativeAngle -= Math.PI;
+            if (relativeAngle < -Math.PI/2) relativeAngle += Math.PI;
+
+            const gW = (canvas.width * CONFIG.gateWidthPct) * (0.05 + dPct * 2.5);
+            const gH = (canvas.height * CONFIG.gateHeightPct) * (0.05 + dPct * 2.5);
+
+
+            // Calculate ship's "Wing Extents" based on its current rotation relative to the gate
+		let shipHalfWidth = ship.w / 2;
+		let shipHalfHeight = ship.h / 2;
+
+			// Check the four corners of your ship against the gate's boundaries
+			let hitWall = false;
+[[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sy]) => {
+    // Ship corner relative to ship center
+    let cornerX = sx * shipHalfWidth;
+    let cornerY = sy * shipHalfHeight;
+
+    // Rotate ship corner by ship's relative angle to the gate
+    let finalRX = rx + (cornerX * Math.cos(relativeAngle) - cornerY * Math.sin(relativeAngle));
+    let finalRY = ry + (cornerX * Math.sin(relativeAngle) + cornerY * Math.cos(relativeAngle));
+
+    if (Math.abs(finalRX) > gW/2 || Math.abs(finalRY) > gH/2) {
+        hitWall = true;
+    }
+});
+
+if (hitWall) {
+    gameOver();
+}
+            }
+        }
+        if (g.z < CONFIG.collisionZEnd) g.passed = true;
+        if (g.z <= -0.5) gates.splice(i, 1);
+    }
+
+    document.getElementById("dist").innerText = Math.floor(distance);
+    document.getElementById("thrust").innerText = Math.floor(speedMultiplier * 100);
+}
+
+function gameOver() {
+    gameRunning = false;
+    ctx.fillStyle = "rgba(255, 0, 0, 0.6)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    setTimeout(() => { startBtn.style.display = "block"; }, 500);
+}
+
+function draw() {
+    ctx.fillStyle = "#000"; 
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!gameRunning) return;
+
+    const mx = canvas.width / 2, my = canvas.height / 2;
+
+    // Stars
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+    stars.forEach(s => {
+        let sz = Math.pow(1 - (s.z / CONFIG.maxZ), 2);
+        ctx.beginPath();
+        ctx.arc(mx + s.x * sz, my + s.y * sz, 1 * sz, 0, Math.PI*2);
+        ctx.stroke();
+    });
+
+    // Draw gates and trench lines
+    for (let i = gates.length - 1; i >= 0; i--) {
+        let g = gates[i];
+        let dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2); 
+        let scale = 0.05 + dPct * 2.5; 
+        let sW = (canvas.width * CONFIG.gateWidthPct) * scale; 
+        let sH = (canvas.height * CONFIG.gateHeightPct) * scale;
+        let sX = mx + g.cx * dPct; 
+        let sY = my + g.cy * dPct;
+
+        ctx.save();
+        ctx.translate(sX, sY);
+        ctx.rotate(g.roll);
+        
+        ctx.strokeStyle = i === 0 ? "#fff" : `rgba(0, 230, 118, ${0.8 - (i*0.1)})`;
+        ctx.lineWidth = i === 0 ? 5 : 2;
+        ctx.strokeRect(-sW/2, -sH/2, sW, sH);
+        
+        // Add "Grid lines" inside the gate for depth
+        ctx.strokeStyle = `rgba(0, 230, 118, 0.1)`;
+        ctx.beginPath();
+        for(let j=-2; j<=2; j++) {
+            ctx.moveTo(j*(sW/4), -sH/2); ctx.lineTo(j*(sW/4), sH/2);
+        }
+        ctx.stroke();
+        
+        ctx.restore();
+
+        // Connect corners for the "Trench" feel
+        if (i < gates.length - 1) {
+            let n = gates[i+1];
+            let nPct = Math.pow(1 - (n.z / CONFIG.maxZ), 2);
+            let nScale = 0.05 + nPct * 2.5;
+            let nX = mx + n.cx * nPct, nY = my + n.cy * nPct;
+            let nW = (canvas.width * CONFIG.gateWidthPct) * nScale, nH = (canvas.height * CONFIG.gateHeightPct) * nScale;
+
+            ctx.strokeStyle = `rgba(0, 100, 50, ${0.3 / (i + 1)})`;
+            
+            // Helper to get rotated corner points
+            const getCorners = (x, y, w, h, r) => [
+                {x: x + (-w/2)*Math.cos(r) - (-h/2)*Math.sin(r), y: y + (-w/2)*Math.sin(r) + (-h/2)*Math.cos(r)},
+                {x: x + (w/2)*Math.cos(r) - (-h/2)*Math.sin(r), y: y + (w/2)*Math.sin(r) + (-h/2)*Math.cos(r)},
+                {x: x + (w/2)*Math.cos(r) - (h/2)*Math.sin(r), y: y + (w/2)*Math.sin(r) + (h/2)*Math.cos(r)},
+                {x: x + (-w/2)*Math.cos(r) - (h/2)*Math.sin(r), y: y + (-w/2)*Math.sin(r) + (h/2)*Math.cos(r)}
+            ];
+
+            let c1 = getCorners(sX, sY, sW, sH, g.roll);
+            let c2 = getCorners(nX, nY, nW, nH, n.roll);
+
+            ctx.beginPath();
+            for(let k=0; k<4; k++) {
+                ctx.moveTo(c1[k].x, c1[k].y);
+                ctx.lineTo(c2[k].x, c2[k].y);
+            }
+            ctx.stroke();
+        }
+    }
+
+    // Ship
+    ctx.save();
+    ctx.translate(ship.x, ship.y); 
+    ctx.rotate(ship.angle);
+    ctx.strokeStyle = "#fff"; 
+    ctx.lineWidth = 3;
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#00E676";
+    // X-Wing style
+    ctx.beginPath();
+    ctx.moveTo(20, 0); 
+    ctx.lineTo(-10, -30); ctx.lineTo(-10, 30);
+    ctx.closePath(); ctx.stroke();
+    // Engine Glow
+    ctx.fillStyle = "#00E676";
+    ctx.fillRect(-15, -15, 5, 30);
+    ctx.restore();
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+
+startBtn.addEventListener("click", async () => {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        try { await DeviceMotionEvent.requestPermission(); } catch(e) {}
+    }
+    if (lastAcc) { baseGY = lastAcc.y || 0; baseGX = lastAcc.x || 0; }
+    initTrench(); gameRunning = true; startBtn.style.display = "none"; document.getElementById("startScreen").style.display = "none";
+});
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
