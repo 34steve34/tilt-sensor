@@ -3,23 +3,24 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v26.1</title>
+<title>Trench Run v26.2</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #000; overflow: hidden; touch-action: none; font-family: monospace; color: #00E676; }
-#gameCanvas { display: block; }
-#ui { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; }
-#startBtn {
-    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    padding: 20px 40px; font-size: 20px; background: #00E676; color: #000;
-    border: none; border-radius: 12px; cursor: pointer; z-index: 100; font-weight: bold;
-}
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
+    #gameCanvas { display: block; }
+    #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 18px; }
+    #startBtn {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        padding: 20px 40px; font-size: 24px; background: #00E676; color: #000;
+        border: none; border-radius: 4px; cursor: pointer; z-index: 100; font-weight: bold;
+        box-shadow: 0 0 20px rgba(0, 230, 118, 0.5);
+    }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="ui">DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
-<button id="startBtn">ENGAGE ENGINES</button>
+<button id="startBtn">INITIALIZE SYSTEMS</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -31,27 +32,29 @@ let touchL = false, touchR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
 let distance = 0, frameCount = 0;
-let speedMultiplier = 0.2; // Start a bit faster (20%)
+let speedMultiplier = 0.15; 
 
 const CONFIG = {
     rotTorque: 0.0016, 
-    driftSens: 0.12, 
-    driftFriction: 0.92, 
-    rotFriction: 0.97,
-    trenchSpeedBase: 0.012, 
-    curveDrift: 160, 
-    gateFrequency: 16,
+    driftSens: 0.15, 
+    driftFriction: 0.90, 
+    rotFriction: 0.96,
+    trenchSpeedBase: 0.007, // Slowed down for better reaction
+    curveDrift: 180, 
+    gateFrequency: 24,      // More space between gates
+    maxZ: 5.0,
+    visibleTrenchDepth: 5,   // Only draw lines for the nearest 5 gates
     baseW: () => canvas.width * 0.45, 
-    baseH: () => canvas.height * 0.45,
-    maxZ: 5.0
+    baseH: () => canvas.height * 0.45
 };
 
 let ship = { 
     x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0,
-    w: 90, h: 8 
+    w: 80, h: 8 
 };
 
 let gates = []; 
+let stars = []; // For speed lines
 let pathX = 0, pathY = 0; 
 let lastAcc = null;
 
@@ -59,10 +62,24 @@ function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     ship.x = canvas.width / 2; ship.y = canvas.height / 2;
+    initStars();
 }
+
+function initStars() {
+    stars = [];
+    for(let i=0; i<60; i++) {
+        stars.push({
+            x: Math.random() * canvas.width - canvas.width/2,
+            y: Math.random() * canvas.height - canvas.height/2,
+            z: Math.random() * CONFIG.maxZ
+        });
+    }
+}
+
 window.addEventListener("resize", resize);
 resize();
 
+// Input listeners
 window.addEventListener("touchstart", (e) => {
     if (!gameRunning) return;
     for(let t of e.touches) (t.clientX < canvas.width/2) ? touchL = true : touchR = true;
@@ -87,24 +104,26 @@ function spawnGate(customZ) {
 
 function initTrench() {
     gates = [];
-    // Spawn gates immediately at intervals so we start "inside"
-    spawnGate(0.5); // Right in front
-    spawnGate(1.5);
-    spawnGate(2.5);
-    spawnGate(3.5);
-    spawnGate(4.5);
+    distance = 0;
+    frameCount = 0;
+    speedMultiplier = 0.15;
+    // Spawn uniform starter gates
+    for(let i=1; i<=5; i++) {
+        spawnGate(i * 1.0);
+    }
 }
 
 function update() {
     if (!gameRunning) return;
     
-    if (speedMultiplier < 1.0) speedMultiplier += 0.0012; 
+    if (speedMultiplier < 1.0) speedMultiplier += 0.0008; 
     let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
-    distance += currentSpeed * 30;
+    distance += currentSpeed * 50;
     frameCount++;
 
-    pathX = Math.sin(frameCount * 0.015) * CONFIG.curveDrift;
-    pathY = Math.cos(frameCount * 0.01) * (CONFIG.curveDrift * 0.4);
+    // Path curving
+    pathX = Math.sin(frameCount * 0.012) * CONFIG.curveDrift;
+    pathY = Math.cos(frameCount * 0.008) * (CONFIG.curveDrift * 0.4);
 
     if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
 
@@ -116,33 +135,46 @@ function update() {
     ship.x += ship.vx; ship.y += ship.vy;
     ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
 
+    // Boundary constraints
     ship.x = Math.max(20, Math.min(canvas.width - 20, ship.x));
     ship.y = Math.max(20, Math.min(canvas.height - 20, ship.y));
 
+    // Star/Speedline update
+    stars.forEach(s => {
+        s.z -= currentSpeed * 2;
+        if(s.z <= 0) s.z = CONFIG.maxZ;
+    });
+
+    // Gate update and collision
     for (let i = gates.length - 1; i >= 0; i--) {
+        let prevZ = gates[i].z;
         gates[i].z -= currentSpeed;
         
-        // COLLISION: Improved Z-trigger (0.2 is the ship's plane)
-        if (i === 0 && gates[i].z < 0.25) {
-            const dPct = 1 - (gates[i].z / CONFIG.maxZ);
+        // COLLISION CHECK: Triggered as the gate passes the player's plane (z=0.2)
+        if (prevZ > 0.2 && gates[i].z <= 0.2) {
+            const dPct = Math.pow(1 - (0.2 / CONFIG.maxZ), 2);
             const cX = canvas.width/2 + gates[i].cx * dPct;
             const cY = canvas.height/2 + gates[i].cy * dPct;
             
-            // If the gate has passed the ship, check if we were inside
             if (Math.abs(ship.x - cX) > gates[i].w/2 || Math.abs(ship.y - cY) > gates[i].h/2) {
                 gameOver();
             }
         }
         if (gates[i].z <= 0) gates.splice(i, 1);
     }
+
     document.getElementById("dist").innerText = Math.floor(distance);
     document.getElementById("thrust").innerText = Math.floor(speedMultiplier * 100);
 }
 
 function gameOver() {
     gameRunning = false;
-    ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(0,0,canvas.width,canvas.height);
-    setTimeout(() => { location.reload(); }, 500);
+    ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    setTimeout(() => { 
+        startBtn.style.display = "block";
+        startBtn.innerText = "RETRY MISSION";
+    }, 500);
 }
 
 function draw() {
@@ -151,70 +183,45 @@ function draw() {
 
     const mx = canvas.width / 2, my = canvas.height / 2;
 
+    // Draw Speed Lines
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+    stars.forEach(s => {
+        let sz = Math.pow(1 - (s.z / CONFIG.maxZ), 2);
+        let sx = mx + s.x * sz;
+        let sy = my + s.y * sz;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + (s.x * 0.05), sy + (s.y * 0.05));
+        ctx.stroke();
+    });
+
+    // Draw Gates
     for (let i = gates.length - 1; i >= 0; i--) {
         let g = gates[i];
-        let dPct = 1 - (g.z / CONFIG.maxZ); 
-        let scale = 0.1 + Math.pow(dPct, 3) * 1.5; 
+        // Exponential scaling for real 3D depth perception
+        let dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2); 
+        let scale = 0.05 + dPct * 2.5; 
         
         let sW = g.w * scale; let sH = g.h * scale;
         let sX = mx + g.cx * dPct; let sY = my + g.cy * dPct;
 
         let isNearest = (i === 0);
-        let col = (isNearest && g.z < 1.5) ? `255, 255, 255` : `0, 230, 118`;
+        let alpha = Math.min(1, dPct * 1.5);
         
-        ctx.strokeStyle = `rgba(${col}, ${Math.max(0.1, dPct)})`;
-        ctx.lineWidth = (isNearest && g.z < 1.5) ? 4 : 2;
+        // Rectangle drawing
+        ctx.strokeStyle = isNearest ? `rgba(255, 255, 255, ${alpha})` : `rgba(0, 230, 118, ${alpha * 0.5})`;
+        ctx.lineWidth = isNearest ? 3 : 1;
         ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
 
-        // Safe-Zone Visual (Ghost Crosshair)
-        if (isNearest && g.z < 1.5) {
-            ctx.strokeStyle = "rgba(0, 230, 118, 0.5)";
-            ctx.strokeRect(sX - 10, sY - 2, 20, 4); // HUD indicator
-        }
-
-        if (i < gates.length - 1) {
+        // Connecting Lines (Trench Ribs) - Limited depth to prevent clutter
+        if (i < CONFIG.visibleTrenchDepth && i < gates.length - 1) {
             let n = gates[i+1];
-            let nPct = 1 - (n.z / CONFIG.maxZ);
-            let nScale = 0.1 + Math.pow(nPct, 3) * 1.5;
+            let nPct = Math.pow(1 - (n.z / CONFIG.maxZ), 2);
+            let nScale = 0.05 + nPct * 2.5;
             let nX = mx + n.cx * nPct, nY = my + n.cy * nPct;
             let nW = n.w * nScale, nH = n.h * nScale;
 
-            ctx.strokeStyle = (isNearest) ? `rgba(255, 140, 0, 0.6)` : `rgba(255, 140, 0, 0.15)`;
+            ctx.strokeStyle = `rgba(255, 140, 0, ${0.4 / (i + 1)})`;
             ctx.beginPath();
             ctx.moveTo(sX-sW/2, sY-sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
-            ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY-nH/2);
-            ctx.moveTo(sX-sW/2, sY+sH/2); ctx.lineTo(nX-nW/2, nY+nH/2);
-            ctx.moveTo(sX+sW/2, sY+sH/2); ctx.lineTo(nX+nW/2, nY+nH/2);
-            ctx.stroke();
-        }
-    }
-
-    // Wide Plane
-    ctx.save();
-    ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(20, 0); 
-    ctx.lineTo(-10, -ship.w/2); ctx.lineTo(-5, 0); ctx.lineTo(-10, ship.w/2);
-    ctx.closePath(); ctx.stroke();
-    // Engine Glow
-    ctx.fillStyle = "rgba(0, 230, 118, 0.3)";
-    ctx.fillRect(-12, -10, 4, 20);
-    ctx.restore();
-}
-
-function loop() { update(); draw(); requestAnimationFrame(loop); }
-loop();
-
-startBtn.addEventListener("click", async () => {
-    if (typeof DeviceMotionEvent.requestPermission === 'function') await DeviceMotionEvent.requestPermission();
-    if (lastAcc) { 
-        baseGY = lastAcc.x; baseGX = lastAcc.y; 
-        initTrench(); // Populate the corridor BEFORE starting
-        gameRunning = true; 
-        startBtn.style.display = "none"; 
-    }
-});
-</script>
-</body>
-</html>
+            ctx.moveTo(sX+sW/2, sY
