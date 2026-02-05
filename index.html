@@ -260,11 +260,23 @@ loop();
 
 // --- Fixed System Initialization ---
 startBtn.addEventListener("click", async () => {
-    // 1. Motion permission (iOS/Safari)
+    // 1. Request permission for iOS/Safari (wrapped in try/catch to prevent crashes)
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        try { await DeviceMotionEvent.requestPermission(); } catch(e) { console.log("Sensor permission skipped"); }
+        try { 
+            await DeviceMotionEvent.requestPermission(); 
+        } catch(e) { 
+            console.log("Sensor access denied or not supported"); 
+        }
     }
-    // 2. Calibrate if possible
-    if (lastAcc) { baseGY = lastAcc.x || 0; baseGX = lastAcc.y || 0; }
     
-    // 3. Start Game (For
+    // 2. Calibrate baseline ONLY if sensors are active
+    if (lastAcc) { 
+        baseGY = lastAcc.x; 
+        baseGX = lastAcc.y; 
+    }
+
+    // 3. START GAME (Moved outside the 'if' so it always works)
+    initTrench(); 
+    gameRunning = true; 
+    startBtn.style.display = "none"; 
+});
