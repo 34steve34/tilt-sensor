@@ -3,14 +3,18 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Trench Run v26.2</title>
+<title>Trench Run v26.3 – 2025</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
     #gameCanvas { display: block; }
     #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 18px; }
-    #startBtn {
+    #startScreen {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        color: #00E676; font-size: 24px; text-align: center; pointer-events: none; z-index: 90;
+    }
+    #startBtn {
+        position: absolute; top: 60%; left: 50%; transform: translate(-50%, -50%);
         padding: 20px 40px; font-size: 24px; background: #00E676; color: #000;
         border: none; border-radius: 4px; cursor: pointer; z-index: 100; font-weight: bold;
         box-shadow: 0 0 20px rgba(0, 230, 118, 0.5);
@@ -19,7 +23,8 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="ui">DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
+<div id="ui">v26.3 | DIST: <span id="dist">0</span>m | THRUST: <span id="thrust">0</span>%</div>
+<div id="startScreen">Trench Run v26.3<br><small>Tap ENGAGE to start – tilt or tap sides to steer</small></div>
 <button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
@@ -33,7 +38,7 @@ let keyL = false, keyR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
 let distance = 0, frameCount = 0;
-let speedMultiplier = 0.15; 
+let speedMultiplier = 0.4;  // Start higher for snappier feel
 
 const CONFIG = {
     rotTorque: 0.0016, 
@@ -98,8 +103,8 @@ window.addEventListener("keyup", (e) => {
 window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
     if (!gameRunning || !lastAcc) return;
-    tiltY = Math.max(-3, Math.min(3, (lastAcc.x || 0) - baseGY));
-    tiltX = Math.max(-3, Math.min(3, (lastAcc.y || 0) - baseGX));
+    tiltY = Math.max(-3, Math.min(3, (lastAcc.x || 0) - baseGX));
+    tiltX = Math.max(-3, Math.min(3, (lastAcc.y || 0) - baseGY));
 });
 
 // --- Gameplay Logic ---
@@ -118,28 +123,27 @@ function initTrench() {
     gates = [];
     distance = 0;
     frameCount = 0;
-    speedMultiplier = 0.15;
-    // Fixes the "confusing start" by spawning a consistent set of gates
+    speedMultiplier = 0.4;
+    // Closer initial gates
     for(let i=1; i<=5; i++) {
-        spawnGate(i * 1.0);
+        spawnGate(i * 0.7);
     }
 }
 
 function update() {
     if (!gameRunning) return;
     
-    if (speedMultiplier < 1.0) speedMultiplier += 0.0008; 
+    if (speedMultiplier < 1.0) speedMultiplier += 0.001; 
     let currentSpeed = CONFIG.trenchSpeedBase * speedMultiplier;
     distance += currentSpeed * 50;
     frameCount++;
 
-    // Procedural Path
     pathX = Math.sin(frameCount * 0.012) * CONFIG.curveDrift;
     pathY = Math.cos(frameCount * 0.008) * (CONFIG.curveDrift * 0.4);
 
     if (frameCount % CONFIG.gateFrequency === 0) spawnGate();
 
-    // Movement Physics
+    // Movement
     if (touchL || keyL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR || keyR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
@@ -150,18 +154,15 @@ function update() {
     ship.x = Math.max(20, Math.min(canvas.width - 20, ship.x));
     ship.y = Math.max(20, Math.min(canvas.height - 20, ship.y));
 
-    // Star/Speedline movement
     stars.forEach(s => {
         s.z -= currentSpeed * 2;
         if(s.z <= 0) s.z = CONFIG.maxZ;
     });
 
-    // Gate Updates & Collision Check
     for (let i = gates.length - 1; i >= 0; i--) {
         let prevZ = gates[i].z;
         gates[i].z -= currentSpeed;
         
-        // Exact plane collision check at ship's Z-depth (0.2)
         if (prevZ > 0.2 && gates[i].z <= 0.2) {
             const dPct = Math.pow(1 - (0.2 / CONFIG.maxZ), 2);
             const cX = (canvas.width / 2) + gates[i].cx * dPct;
@@ -188,6 +189,7 @@ function gameOver() {
     setTimeout(() => { 
         startBtn.style.display = "block";
         startBtn.innerText = "RETRY MISSION";
+        document.getElementById("startScreen").style.display = "block";
     }, 500);
 }
 
@@ -197,7 +199,6 @@ function draw() {
 
     const mx = canvas.width / 2, my = canvas.height / 2;
 
-    // Draw Speed Lines (The "Visual Anchor")
     ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
     stars.forEach(s => {
         let sz = Math.pow(1 - (s.z / CONFIG.maxZ), 2);
@@ -208,7 +209,6 @@ function draw() {
         ctx.stroke();
     });
 
-    // Draw Trench
     for (let i = gates.length - 1; i >= 0; i--) {
         let g = gates[i];
         let dPct = Math.pow(1 - (g.z / CONFIG.maxZ), 2); 
@@ -221,10 +221,9 @@ function draw() {
         let alpha = Math.min(1, dPct * 1.5);
         
         ctx.strokeStyle = isNearest ? `rgba(255, 255, 255, ${alpha})` : `rgba(0, 230, 118, ${alpha * 0.5})`;
-        ctx.lineWidth = isNearest ? 3 : 1;
+        ctx.lineWidth = isNearest ? 4 : 1;  // Brighter nearest
         ctx.strokeRect(sX - sW/2, sY - sH/2, sW, sH);
 
-        // Connecting Ribs (Restricted depth for clarity)
         if (i < CONFIG.visibleTrenchDepth && i < gates.length - 1) {
             let n = gates[i+1];
             let nPct = Math.pow(1 - (n.z / CONFIG.maxZ), 2);
@@ -235,14 +234,13 @@ function draw() {
             ctx.strokeStyle = `rgba(255, 140, 0, ${0.4 / (i + 1)})`;
             ctx.beginPath();
             ctx.moveTo(sX-sW/2, sY-sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
-            ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY-nH/2);
-            ctx.moveTo(sX-sW/2, sY+sH/2); ctx.lineTo(nX-nW/2, nY+nH/2);
+            ctx.moveTo(sX+sW/2, sY-sH/2); ctx.lineTo(nX+nW/2, nY+nH/2);
+            ctx.moveTo(sX-sW/2, sY+sH/2); ctx.lineTo(nX-nW/2, nY-nH/2);
             ctx.moveTo(sX+sW/2, sY+sH/2); ctx.lineTo(nX+nW/2, nY+nH/2);
             ctx.stroke();
         }
     }
 
-    // Draw Ship
     ctx.save();
     ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
@@ -258,25 +256,25 @@ function draw() {
 function loop() { update(); draw(); requestAnimationFrame(loop); }
 loop();
 
-// --- Fixed System Initialization ---
 startBtn.addEventListener("click", async () => {
-    // 1. Request permission for iOS/Safari (wrapped in try/catch to prevent crashes)
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         try { 
             await DeviceMotionEvent.requestPermission(); 
         } catch(e) { 
-            console.log("Sensor access denied or not supported"); 
+            console.log("Sensor permission denied or not supported");
         }
     }
     
-    // 2. Calibrate baseline ONLY if sensors are active
     if (lastAcc) { 
-		baseGY = lastAcc?.x || 0;
-		baseGX = lastAcc?.y || 0;
+        baseGY = lastAcc.x || 0; 
+        baseGX = lastAcc.y || 0; 
     }
 
-    // 3. START GAME (Moved outside the 'if' so it always works)
     initTrench(); 
     gameRunning = true; 
     startBtn.style.display = "none"; 
+    document.getElementById("startScreen").style.display = "none";
 });
+</script>
+</body>
+</html>
