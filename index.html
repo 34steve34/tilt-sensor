@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v44.5</title>
+<title>STAR STREAM v44.6</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -22,7 +22,7 @@
     .warning-orange { color: #FFA500 !important; }
     #deathScreen {
         position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(255, 69, 0, 0.9); display: none; z-index: 200; align-items: center; justify-content: center;
+        display: none; z-index: 200; align-items: center; justify-content: center;
         color: #fff; font-size: 32px; font-weight: bold; text-align: center;
     }
 </style>
@@ -34,17 +34,17 @@
     TIME: <span id="timer">30.00</span>s | SCORE: <span id="scoreDisp">200</span>
 </div>
 
-<div id="deathScreen">HULL BREACHED<br>SYSTEM REBOOTING...</div>
+<div id="deathScreen">HULL BREACHED<br>STABILIZING...</div>
 
 <div id="overlay">
-    <h1 style="margin-bottom: 10px; font-size: 16px;">PHYSICS RE-ALIGNMENT v44.5</h1>
+    <h1 style="margin-bottom: 10px; font-size: 16px;">VIRTUAL STRESS TEST v44.6</h1>
     <div class="briefing">
-        - <b>ROTATION:</b> Speed x2. Isolated from drift vectors.<br>
-        - <b>DRIFT:</b> Tilt-based movement (Clean 2D translation).<br>
-        - <b>COMBAT:</b> 50% slow-mo on target during Orange Bloom.<br>
-        - <b>AUTO-START:</b> Level restarts immediately on death.
+        - <b>PASS SCORE:</b> 150 (Calibrated for combat fatigue).<br>
+        - <b>FEEDBACK:</b> Threats flash WHITE when hit.<br>
+        - <b>FAILURE:</b> Failure to neutralize will result in Singularity Overrun.<br>
+        - <b>PHYSICS:</b> Rotation x2 speed with zero-drift isolation.
     </div>
-    <button id="startBtn">ENGAGE ENGINES</button>
+    <button id="startBtn">INITIATE TRIAL</button>
 </div>
 
 <div id="results">
@@ -65,17 +65,14 @@ let evalSlowdown = 1.0, touchL = false, lastLTap = 0, rotDir = 1;
 let tiltX = 0, tiltY = 0, totalError = 0, startTime = 0;
 
 let bullets = [], stars = [];
-let threat = { active: false, angle: 0, hits: 0, startTime: 0, flicker: 0, lastTrigger: 0 };
+let threat = { active: false, angle: 0, hits: 0, startTime: 0, flicker: 0, lastTrigger: 0, doomScale: 0, dying: false };
 let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0 };
 let leadPoint = { x: 0, y: 0 };
 
 const CONFIG = {
-    rotTorque: 0.0045, // DOUBLED FROM 0.0018-0.0022
-    driftSens: 0.35, 
-    driftFriction: 0.88, 
-    rotFriction: 0.82, // Higher friction to prevent wild spinning
+    rotTorque: 0.0045, driftSens: 0.35, driftFriction: 0.88, rotFriction: 0.82,
     starCount: 500, speedZ: 0.02, trialDuration: 30000, 
-    perfectZone: 15, bulletSpeed: 25
+    perfectZone: 15, bulletSpeed: 25, passScore: 150
 };
 
 function resize() {
@@ -108,10 +105,7 @@ window.addEventListener("touchend", (e) => {
 
 window.addEventListener("devicemotion", (e) => {
     const acc = e.accelerationIncludingGravity;
-    if (acc && gameRunning) { 
-        tiltX = (acc.y || 0); 
-        tiltY = (acc.x || 0) - 6; 
-    }
+    if (acc && gameRunning) { tiltX = (acc.y || 0); tiltY = (acc.x || 0) - 6; }
 });
 
 function fireBullet() {
@@ -131,10 +125,9 @@ function spawnStar(zOverride) {
 }
 
 function triggerThreat() {
-    threat.active = true;
+    threat.active = true; threat.dying = false; threat.doomScale = 0;
     threat.angle = Math.random() * Math.PI * 2;
-    threat.hits = 0;
-    threat.startTime = Date.now();
+    threat.hits = 0; threat.startTime = Date.now();
 }
 
 function update() {
@@ -152,14 +145,19 @@ function update() {
         }
     }
 
-    if (threat.active) {
-        if (now - threat.startTime > 5000) { die(); return; }
+    if (threat.active && !threat.dying) {
+        if (now - threat.startTime > 5000) { threat.dying = true; } // Start Doom expansion
         if (threat.flicker > 0) threat.flicker--;
+    }
+
+    if (threat.dying) {
+        threat.doomScale += 0.04;
+        if (threat.doomScale > 2.0) { die(); return; }
     }
 
     if (elapsed >= CONFIG.trialDuration) { evalSlowdown = 0.7; endGame(); return; }
 
-    let targetSpeedScale = threat.active ? 0.5 : 1.0;
+    let targetSpeedScale = (threat.active && !threat.dying) ? 0.5 : 1.0;
     frameCount += (1 * evalSlowdown * targetSpeedScale);
     let sf = 1 + (currentLevel - 1) * 0.10;
     let t = frameCount * 0.012 * sf;
@@ -176,38 +174,28 @@ function update() {
     let score = Math.floor(Math.max(0, 200 - (totalError / 900)));
     let sDisp = document.getElementById("scoreDisp");
     sDisp.innerText = score;
+    sDisp.className = (score < CONFIG.passScore) ? "warning-orange" : "";
 
-    // --- PURE VECTOR ISOLATION ---
-    // Rotation is strictly Angular (Radians)
-    if (touchL) {
-        ship.vAngle += CONFIG.rotTorque * rotDir;
-    }
-    ship.angle += ship.vAngle; 
-    ship.vAngle *= CONFIG.rotFriction;
-
-    // Translation is strictly Linear (Pixels)
-    // No 'ship.angle' math is used in vx/vy calculation to prevent the "lunging" bug
-    ship.vx += tiltX * CONFIG.driftSens; 
-    ship.vy += tiltY * CONFIG.driftSens;
-    ship.x += ship.vx; 
-    ship.y += ship.vy;
-    ship.vx *= CONFIG.driftFriction; 
-    ship.vy *= CONFIG.driftFriction;
+    // Physics
+    if (touchL) ship.vAngle += CONFIG.rotTorque * rotDir;
+    ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
+    ship.vx += tiltX * CONFIG.driftSens; ship.vy += tiltY * CONFIG.driftSens;
+    ship.x += ship.vx; ship.y += ship.vy;
+    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
 
     ship.x = Math.max(0, Math.min(canvas.width, ship.x));
     ship.y = Math.max(0, Math.min(canvas.height, ship.y));
 
-    // Bullet Physics
+    // Bullet Logic
     for (let i = bullets.length - 1; i >= 0; i--) {
-        let b = bullets[i];
-        b.x += b.vx; b.y += b.vy;
+        let b = bullets[i]; b.x += b.vx; b.y += b.vy;
         
-        if (threat.active) {
+        if (threat.active && !threat.dying) {
             let bAng = Math.atan2(b.y - canvas.height/2, b.x - canvas.width/2);
             let diff = Math.abs(((bAng - threat.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
             let dToCenter = Math.hypot(b.x - canvas.width/2, b.y - canvas.height/2);
             if (dToCenter > Math.max(canvas.width, canvas.height) * 0.35 && diff < 0.7) {
-                threat.hits++; threat.flicker = 10;
+                threat.hits++; threat.flicker = 6; // Visual hit flash
                 bullets.splice(i, 1);
                 if (threat.hits >= 3) threat.active = false;
                 continue;
@@ -235,7 +223,7 @@ function endGame() {
     gameRunning = false;
     document.getElementById("finalScore").innerText = document.getElementById("scoreDisp").innerText;
     document.getElementById("results").style.display = "block";
-    let passed = parseInt(document.getElementById("scoreDisp").innerText) >= 180;
+    let passed = parseInt(document.getElementById("scoreDisp").innerText) >= CONFIG.passScore;
     document.getElementById("qualifyMsg").innerText = passed ? "SUCCESS - PILOT QUALIFIED" : "PRECISION FAILURE - RETRY";
     nextLevelBtn.onclick = () => startLevel(passed ? currentLevel + 1 : currentLevel);
 }
@@ -247,7 +235,7 @@ function startLevel(lvl) {
     document.getElementById("overlay").style.display = "none";
     ship.x = canvas.width / 2; ship.y = canvas.height / 2;
     ship.vx = 0; ship.vy = 0; ship.vAngle = 0;
-    stars = []; bullets = []; threat.active = false; threat.lastTrigger = 0;
+    stars = []; bullets = []; threat.active = false; threat.dying = false; threat.lastTrigger = 0;
     for(let i=0; i<CONFIG.starCount; i++) spawnStar(Math.random());
     totalError = 0; startTime = Date.now(); gameRunning = true;
 }
@@ -256,18 +244,20 @@ function draw() {
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning && evalSlowdown === 1.0) return;
     
+    // THREAT DRAWING
     if (threat.active) {
         ctx.save();
         ctx.translate(canvas.width/2, canvas.height/2);
         let targetX = Math.cos(threat.angle) * Math.max(canvas.width, canvas.height) * 0.45;
         let targetY = Math.sin(threat.angle) * Math.max(canvas.width, canvas.height) * 0.45;
-        let pulse = (Math.sin(Date.now() * 0.01) * 0.25) + 0.55;
-        let alpha = threat.flicker > 0 ? 1.0 : pulse;
-        let bloomSize = Math.max(canvas.width, canvas.height) * 0.5;
+        let bloomSize = Math.max(canvas.width, canvas.height) * (0.5 + threat.doomScale);
         
         let grad = ctx.createRadialGradient(targetX, targetY, 0, targetX, targetY, bloomSize);
-        grad.addColorStop(0, `rgba(255, 120, 0, ${alpha})`);
-        grad.addColorStop(0.3, `rgba(255, 60, 0, ${alpha * 0.4})`);
+        let baseColor = threat.flicker > 0 ? "255, 255, 255" : "255, 120, 0"; // White flash on hit
+        let alpha = threat.dying ? 0.8 : 0.6;
+        
+        grad.addColorStop(0, `rgba(${baseColor}, ${alpha})`);
+        grad.addColorStop(0.3, `rgba(255, 60, 0, ${alpha * 0.5})`);
         grad.addColorStop(1, "rgba(255, 0, 0, 0)");
         
         ctx.fillStyle = grad;
@@ -290,7 +280,6 @@ function draw() {
         ctx.fillRect(b.x-3, b.y-3, 7, 7);
     });
 
-    // Ship
     ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath();
     ctx.moveTo(25, 0); ctx.lineTo(-15, -30); ctx.lineTo(-8, 0); ctx.lineTo(-15, 30);
