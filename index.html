@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v38.0</title>
+<title>STAR STREAM v38.1</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -11,19 +11,20 @@
     #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 18px; }
     #startBtn {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        padding: 20px 40px; font-size: 24px; background: #00E676; color: #000;
-        border: none; border-radius: 4px; cursor: pointer; z-index: 100; font-weight: bold;
+        padding: 25px 50px; font-size: 24px; background: #00E676; color: #000;
+        border: none; border-radius: 8px; cursor: pointer; z-index: 100; font-weight: bold;
+        box-shadow: 0 0 20px #00E676;
     }
     #results {
         position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
-        text-align: center; display: none; background: rgba(0,0,0,0.9); padding: 30px; border: 2px solid #00E676; z-index: 110;
+        text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110;
     }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="ui">
-    STAR STREAM v38.0<br>
+    STAR STREAM v38.1<br>
     TIME: <span id="timer">30.00</span>s<br>
     SCORE: <span id="score">0</span>
 </div>
@@ -35,7 +36,7 @@
     <button onclick="location.reload()" style="padding: 15px 30px; font-size: 18px; cursor:pointer; background:#00E676; border:none; font-weight:bold;">RE-INITIALIZE</button>
 </div>
 
-<button id="startBtn">ENGAGE STAR STREAM</button>
+<button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -49,7 +50,6 @@ let baseGX = 0, baseGY = 0;
 let frameCount = 0;
 let totalScore = 0;
 let startTime = 0;
-
 let leadPoint = { x: 0, y: 0 };
 
 const CONFIG = {
@@ -57,9 +57,9 @@ const CONFIG = {
     driftSens: 0.35,      
     driftFriction: 0.85,  
     rotFriction: 0.92,    
-    starCount: 500,       // High density stream
-    speed: 0.022,         // Smooth approach speed
-    trialDuration: 30000  // 30 seconds
+    starCount: 500,       
+    speed: 0.022,         
+    trialDuration: 30000  
 };
 
 let ship = { 
@@ -69,7 +69,6 @@ let ship = {
 };
 
 let stars = [];
-let lastAcc = null;
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -81,25 +80,29 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
+// Touch Controls (Restored from v38.0)
 window.addEventListener("touchstart", (e) => {
     if (!gameRunning) return;
     for(let t of e.touches) (t.clientX < canvas.width/2) ? touchL = true : touchR = true;
 });
 window.addEventListener("touchend", () => { touchL = false; touchR = false; });
 
+// Tilt Sensor Logic
 window.addEventListener("devicemotion", (e) => {
-    lastAcc = e.accelerationIncludingGravity;
-    if (!gameRunning || !lastAcc) return;
-    tiltX = (lastAcc.y || 0) - baseGY;
-    tiltY = (lastAcc.x || 0) - (baseGX || 6);
+    if (!gameRunning) return;
+    const acc = e.accelerationIncludingGravity;
+    if (acc) {
+        tiltX = (acc.y || 0) - baseGY;
+        tiltY = (acc.x || 0) - (baseGX || 6); // Compensate for natural phone tilt
+    }
 });
 
 function spawnStar(zOverride) {
     stars.push({
         originX: leadPoint.x,
         originY: leadPoint.y,
-        xOffset: (Math.random() - 0.5) * 450,
-        yOffset: (Math.random() - 0.5) * 450,
+        xOffset: (Math.random() - 0.5) * 500,
+        yOffset: (Math.random() - 0.5) * 500,
         z: zOverride || 1.0,
         size: Math.random() * 2 + 0.5
     });
@@ -120,17 +123,17 @@ function update() {
 
     frameCount++;
 
-    // Meandering Horizon Origin
+    // Meandering Target (Restored from v38.0)
     leadPoint.x = (canvas.width / 2) + Math.sin(frameCount * 0.01) * (canvas.width * 0.35);
     leadPoint.y = (canvas.height / 2) + Math.cos(frameCount * 0.015) * (canvas.height * 0.25);
 
-    // Scoring Logic: Proximity to leadPoint
+    // Scoring (Restored from v37.0)
     let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
     let framePoints = Math.max(0, 1.15 - (dist / 450)); 
     totalScore += framePoints;
     document.getElementById("score").innerText = Math.floor(totalScore / 10);
 
-    // Controls/Physics
+    // Ship Movement
     if (touchL) ship.vAngle -= CONFIG.rotTorque;
     if (touchR) ship.vAngle += CONFIG.rotTorque;
     ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
@@ -164,15 +167,13 @@ function draw() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
-    // North Star / Target Point
+    // Green Target Hub
     ctx.fillStyle = "rgba(0, 230, 118, 0.7)";
-    ctx.shadowBlur = 10; ctx.shadowColor = "#00E676";
     ctx.beginPath();
     ctx.arc(leadPoint.x, leadPoint.y, 10, 0, Math.PI * 2);
     ctx.fill();
-    ctx.shadowBlur = 0;
 
-    // Star Band
+    // The Stream
     stars.forEach(s => {
         let scale = 1 / s.z;
         let pX = s.originX + (s.xOffset * scale);
@@ -182,14 +183,12 @@ function draw() {
         ctx.fillRect(pX, pY, s.size * scale, s.size * scale);
     });
 
-    // Ship
+    // Ship (Restored from v33.0)
     ctx.save();
     ctx.translate(ship.x, ship.y); 
     ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff"; 
     ctx.lineWidth = 3;  
-    ctx.shadowBlur = 15;  
-    ctx.shadowColor = "#00E676";
     ctx.beginPath();
     ctx.moveTo(25, 0);  
     ctx.lineTo(-15, -ship.w/2); 
@@ -203,3 +202,24 @@ function draw() {
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+
+startBtn.addEventListener("click", async () => {
+    // 1. Request Permission if needed
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        try { await DeviceMotionEvent.requestPermission(); } catch(e) { console.error(e); }
+    }
+    
+    // 2. Clear UI immediately
+    startBtn.style.display = "none";
+    
+    // 3. Re-initialize and START
+    stars = [];
+    for(let i=0; i<CONFIG.starCount; i++) spawnStar(Math.random());
+    totalScore = 0;
+    startTime = Date.now();
+    gameRunning = true;
+});
+</script>
+</body>
+</html>
