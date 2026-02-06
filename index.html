@@ -3,54 +3,60 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v44.0</title>
+<title>STAR STREAM v44.0 - Combat Patrol</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
     #gameCanvas { display: block; }
-    #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 20px; }
-    
+    #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 18px; }
     #overlay {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        text-align: center; z-index: 100; background: rgba(0,0,0,0.85); padding: 30px; border: 2px solid #00E676;
+        text-align: center; z-index: 100; background: rgba(0,0,0,0.9); padding: 25px; border: 2px solid #00E676;
     }
-    .briefing { color: #fff; font-size: 14px; margin-bottom: 25px; line-height: 1.6; text-align: left; border-left: 3px solid #00E676; padding-left: 15px; }
-    
+    .briefing { color: #fff; font-size: 12px; margin-bottom: 20px; line-height: 1.5; text-align: left; border-left: 3px solid #00E676; padding-left: 12px; }
     #startBtn {
-        padding: 20px 40px; font-size: 24px; background: #00E676; color: #000;
-        border: none; border-radius: 8px; cursor: pointer; font-weight: bold; box-shadow: 0 0 20px #00E676;
+        padding: 15px 30px; font-size: 20px; background: #00E676; color: #000;
+        border: none; border-radius: 5px; cursor: pointer; font-weight: bold;
     }
     #results {
         position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
-        text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110; min-width: 320px;
+        text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110;
     }
     .warning-orange { color: #FFA500 !important; }
     .warning-red { color: #FF0000 !important; font-weight: bold; }
+    #deathScreen {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        background: #FFA500; display: none; z-index: 200; align-items: center; justify-content: center;
+        color: #000; font-size: 40px; font-weight: bold;
+    }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="ui">
-    STAR STREAM v44.0 | LVL: <span id="lvlDisp">1</span><br>
-    TIME: <span id="timer">30.00</span>s | SCORE: <span id="score">200</span>
+    STAR STREAM | LVL: <span id="lvlDisp">1</span><br>
+    TIME: <span id="timer">30.00</span>s | SCORE: <span id="scoreDisp">200</span>
 </div>
 
+<div id="deathScreen">HULL BREACHED - ALL SOULS LOST</div>
+
 <div id="overlay">
-    <h1 style="margin-bottom: 15px;">PRE-FLIGHT BRIEFING</h1>
+    <h1 style="margin-bottom: 10px; font-size: 20px;">PRE-FLIGHT BRIEFING</h1>
     <div class="briefing">
-        1. <b>TILT DEVICE</b> to drift ship (Up/Down/Left/Right).<br>
-        2. <b>TAP LEFT/RIGHT SCREEN</b> to rotate ship hull.<br>
-        3. <b>TRACK THE TARGET:</b> Stay within the green reticle.<br>
-        4. <b>ACE RATING:</b> Score 180+ to advance.
+        - <b>TILT:</b> Drift ship (Keep on target)<br>
+        - <b>LEFT TAP/HOLD:</b> Rotate ship (Double-tap to flip direction)<br>
+        - <b>RIGHT TAP:</b> Fire pinpoint rifle<br>
+        - <b>THREAT:</b> Neutralize Orange Perimeter Glow (3 shots) within 5s or trial ends.<br>
+        - <b>SCORE:</b> Warning at 184. Fail at 179.
     </div>
     <button id="startBtn">ENGAGE ENGINES</button>
 </div>
 
 <div id="results">
-    <h1>TRIAL COMPLETE</h1>
+    <h1 id="resHeader">TRIAL COMPLETE</h1>
     <h2 id="finalScore" style="font-size: 64px; margin: 10px 0; color: #fff;">0</h2>
     <p id="qualifyMsg" style="margin-bottom: 20px;"></p>
-    <button id="nextLevelBtn" style="padding: 15px 30px; font-size: 18px; cursor:pointer; background:#00E676; border:none; font-weight:bold;">NEXT TRIAL</button>
+    <button id="nextLevelBtn" style="padding: 15px 30px; font-size: 18px; cursor:pointer; background:#00E676; border:none; font-weight:bold;">CONTINUE</button>
 </div>
 
 <script>
@@ -58,55 +64,71 @@ const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 const nextLevelBtn = document.getElementById("nextLevelBtn");
-const timerDisp = document.getElementById("timer");
 
-let gameRunning = false, currentLevel = 1;
-let touchL = false, touchR = false, tiltX = 0, tiltY = 0;
-let baseGX = 0, baseGY = 0, totalError = 0, startTime = 0, samplingTimer = 0;
-let frameCount = 0;
+let gameRunning = false, currentLevel = 1, frameCount = 0;
+let touchL = false, lastLTap = 0, rotDir = 1;
+let tiltX = 0, tiltY = 0, totalError = 0, startTime = 0, samplingTimer = 0;
 
-let phaseDriftX = 0, phaseDriftY = 0;
+let bullets = [], stars = [];
+let threat = { active: false, angle: 0, hits: 0, startTime: 0, flicker: 0 };
 let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0, w: 80 };
-let leadPoint = { x: 0, y: 0 };
+let leadPoint = { x: 0, y: 0 }, phaseDriftX = 0, phaseDriftY = 0;
 
 const CONFIG = {
     rotTorque: 0.0022, driftSens: 0.35, driftFriction: 0.85, rotFriction: 0.92,
-    starCount: 650, speedZ: 0.022, trialDuration: 30000, sampleRate: 50,
-    gracePeriod: 5000, perfectZone: 12
+    starCount: 600, speedZ: 0.022, trialDuration: 30000, 
+    perfectZone: 12, bulletSpeed: 15 // Traversing screen in ~1sec
 };
-
-let stars = [];
 
 function resize() {
     canvas.width = window.innerWidth; canvas.height = window.innerHeight;
     ship.x = canvas.width / 2; ship.y = canvas.height / 2;
-    leadPoint.x = canvas.width / 2; leadPoint.y = canvas.height / 2;
 }
 window.addEventListener("resize", resize); resize();
 
+// Controls
 window.addEventListener("touchstart", (e) => {
     if (!gameRunning) return;
-    for(let t of e.touches) (t.clientX < canvas.width/2) ? touchL = true : touchR = true;
+    for(let t of e.touches) {
+        if (t.clientX < canvas.width/2) {
+            touchL = true;
+            let now = Date.now();
+            if (now - lastLTap < 300) rotDir *= -1;
+            lastLTap = now;
+        } else {
+            fireBullet();
+        }
+    }
 });
-window.addEventListener("touchend", () => { touchL = false; touchR = false; });
+window.addEventListener("touchend", (e) => { if(e.touches.length === 0) touchL = false; });
 
 window.addEventListener("devicemotion", (e) => {
-    if (!gameRunning) return;
     const acc = e.accelerationIncludingGravity;
-    if (acc) { tiltX = (acc.y || 0) - (baseGY || 0); tiltY = (acc.x || 0) - (baseGX || 6); }
+    if (acc && gameRunning) { tiltX = (acc.y || 0); tiltY = (acc.x || 0) - 6; }
 });
 
-// Concentrated star spawning from the current Target position
+function fireBullet() {
+    bullets.push({
+        x: ship.x + Math.cos(ship.angle)*25,
+        y: ship.y + Math.sin(ship.angle)*25,
+        vx: Math.cos(ship.angle) * CONFIG.bulletSpeed,
+        vy: Math.sin(ship.angle) * CONFIG.bulletSpeed
+    });
+}
+
 function spawnStar(zOverride) {
     stars.push({
-        originX: leadPoint.x, 
-        originY: leadPoint.y,
-        // Tightened spread to make the "tunnel" follow the target more closely
-        xOff: (Math.random() - 0.5) * 400, 
-        yOff: (Math.random() - 0.5) * 400,
-        z: zOverride || 1.0, 
-        size: Math.random() * 2 + 0.5
+        originX: leadPoint.x, originY: leadPoint.y,
+        xOff: (Math.random() - 0.5) * 400, yOff: (Math.random() - 0.5) * 400,
+        z: zOverride || 1.0, size: Math.random() * 2 + 0.5
     });
+}
+
+function triggerThreat() {
+    threat.active = true;
+    threat.angle = Math.random() * Math.PI * 2;
+    threat.hits = 0;
+    threat.startTime = Date.now();
 }
 
 function update() {
@@ -115,44 +137,70 @@ function update() {
     let elapsed = now - startTime;
     let remaining = Math.max(0, (CONFIG.trialDuration - elapsed) / 1000);
     
-    timerDisp.innerText = remaining.toFixed(2);
-    if (remaining <= 5) timerDisp.className = "warning-red";
-    else if (remaining <= 15) timerDisp.className = "warning-orange";
-    else timerDisp.className = "";
+    document.getElementById("timer").innerText = remaining.toFixed(2);
+    
+    // Threat triggers at 10s and 20s marks
+    if (!threat.active && ((elapsed > 10000 && elapsed < 10500) || (elapsed > 20000 && elapsed < 20500))) {
+        if (elapsed - (threat.lastTrigger || 0) > 2000) {
+            triggerThreat();
+            threat.lastTrigger = elapsed;
+        }
+    }
+
+    if (threat.active) {
+        if (now - threat.startTime > 5000) { die(); return; }
+        if (threat.flicker > 0) threat.flicker--;
+    }
 
     if (elapsed >= CONFIG.trialDuration) { endGame(); return; }
 
     frameCount++;
-    let sf = 1 + (currentLevel - 1) * 0.15;
+    let sf = 1 + (currentLevel - 1) * 0.10; // 10% increase
     let t = frameCount * 0.015 * sf; 
 
-    // Phase Drift
     phaseDriftX = Math.sin(frameCount * 0.002) * 2.5; 
     phaseDriftY = Math.cos(frameCount * 0.003) * 2.5;
 
-    let desiredX = (canvas.width / 2) + (Math.sin(t * 0.8 + phaseDriftX) * 0.4 + Math.sin(t * 0.3) * 0.1) * canvas.width;
-    let desiredY = (canvas.height / 2) + (Math.cos(t * 0.7 + phaseDriftY) * 0.3 + Math.cos(t * 0.4) * 0.15) * canvas.height;
+    let dX = (canvas.width/2) + (Math.sin(t*0.8 + phaseDriftX)*0.4 + Math.sin(t*0.3)*0.1)*canvas.width;
+    let dY = (canvas.height/2) + (Math.cos(t*0.7 + phaseDriftY)*0.3 + Math.cos(t*0.4)*0.15)*canvas.height;
 
-    leadPoint.x += (desiredX - leadPoint.x) * 0.07;
-    leadPoint.y += (desiredY - leadPoint.y) * 0.07;
+    leadPoint.x += (dX - leadPoint.x) * 0.07;
+    leadPoint.y += (dY - leadPoint.y) * 0.07;
 
-    // Scoring
-    if (elapsed > CONFIG.gracePeriod && now - samplingTimer >= CONFIG.sampleRate) {
-        let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
-        if (dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
-        samplingTimer = now;
-        document.getElementById("score").innerText = Math.floor(Math.max(0, 200 - (totalError / 700)));
-    }
+    // Tracking Score logic
+    let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
+    if (elapsed > 5000 && dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
+    let score = Math.floor(Math.max(0, 200 - (totalError / 700)));
+    let sDisp = document.getElementById("scoreDisp");
+    sDisp.innerText = score;
+    sDisp.className = (score < 185) ? "warning-orange" : "";
 
     // Ship Physics
-    if (touchL) ship.vAngle -= CONFIG.rotTorque;
-    if (touchR) ship.vAngle += CONFIG.rotTorque;
+    if (touchL) ship.vAngle += CONFIG.rotTorque * rotDir;
     ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
     ship.vx += tiltX * CONFIG.driftSens; ship.vy += tiltY * CONFIG.driftSens;
     ship.x += ship.vx; ship.y += ship.vy;
     ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
-    ship.x = Math.max(0, Math.min(canvas.width, ship.x));
-    ship.y = Math.max(0, Math.min(canvas.height, ship.y));
+
+    // Bullets & Collision
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i];
+        b.x += b.vx; b.y += b.vy;
+        if (threat.active) {
+            let bAngle = Math.atan2(b.y - canvas.height/2, b.x - canvas.width/2);
+            let angleDiff = Math.abs(((bAngle - threat.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+            // Check if bullet is near edge and within the 10% (0.62 rad) arc
+            let dToEdge = Math.hypot(b.x - canvas.width/2, b.y - canvas.height/2);
+            if (dToEdge > Math.min(canvas.width, canvas.height)*0.4 && angleDiff < 0.3) {
+                threat.hits++;
+                threat.flicker = 5;
+                bullets.splice(i, 1);
+                if (threat.hits >= 3) threat.active = false;
+                continue;
+            }
+        }
+        if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) bullets.splice(i, 1);
+    }
 
     for (let i = stars.length - 1; i >= 0; i--) {
         let s = stars[i]; s.z -= CONFIG.speedZ;
@@ -160,16 +208,25 @@ function update() {
     }
 }
 
+function die() {
+    gameRunning = false;
+    document.getElementById("deathScreen").style.display = "flex";
+    setTimeout(() => {
+        document.getElementById("deathScreen").style.display = "none";
+        startLevel(currentLevel);
+    }, 2000);
+}
+
 function endGame() {
     gameRunning = false;
-    let final = document.getElementById("score").innerText;
+    let final = document.getElementById("scoreDisp").innerText;
     document.getElementById("finalScore").innerText = final;
     document.getElementById("results").style.display = "block";
     if (final >= 180) {
-        document.getElementById("qualifyMsg").innerText = "ACE RATING - NEXT LEVEL OPEN";
+        document.getElementById("qualifyMsg").innerText = "SUCCESS - SYSTEM STABILIZED";
         nextLevelBtn.onclick = () => startLevel(currentLevel + 1);
     } else {
-        document.getElementById("qualifyMsg").innerText = "RATING LOW - RETRY";
+        document.getElementById("qualifyMsg").innerText = "CRITICAL PRECISION FAILURE";
         nextLevelBtn.onclick = () => startLevel(currentLevel);
     }
 }
@@ -178,37 +235,43 @@ function startLevel(lvl) {
     currentLevel = lvl;
     document.getElementById("lvlDisp").innerText = currentLevel;
     document.getElementById("results").style.display = "none";
-    stars = [];
+    document.getElementById("overlay").style.display = "none";
+    stars = []; bullets = []; threat.active = false;
     for(let i=0; i<CONFIG.starCount; i++) spawnStar(Math.random());
-    totalError = 0; startTime = Date.now(); samplingTimer = startTime;
-    gameRunning = true;
+    totalError = 0; startTime = Date.now(); gameRunning = true;
 }
 
 function draw() {
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
     
-    // Target
-    ctx.fillStyle = "rgba(0, 230, 118, 0.8)";
-    ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 10, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 3, 0, Math.PI * 2); ctx.fill();
+    // Threat Glow
+    if (threat.active && threat.flicker % 2 === 0) {
+        ctx.strokeStyle = "rgba(255, 165, 0, 0.6)";
+        ctx.lineWidth = 40; ctx.beginPath();
+        ctx.arc(canvas.width/2, canvas.height/2, Math.max(canvas.width, canvas.height), threat.angle - 0.3, threat.angle + 0.3);
+        ctx.stroke();
+    }
 
-    // Stars
+    // Stars & Target
     stars.forEach(s => {
         let scale = 1 / s.z;
-        let px = s.originX + (s.xOff * scale);
-        let py = s.originY + (s.yOff * scale);
         ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.8, scale/10)})`;
-        ctx.fillRect(px, py, s.size * scale, s.size * scale);
+        ctx.fillRect(s.originX + (s.xOff * scale), s.originY + (s.yOff * scale), s.size * scale, s.size * scale);
     });
 
+    ctx.fillStyle = "rgba(0, 230, 118, 0.8)";
+    ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 10, 0, Math.PI * 2); ctx.fill();
+
+    // Bullets
+    ctx.fillStyle = "#fff";
+    bullets.forEach(b => ctx.fillRect(b.x, b.y, 4, 4));
+
     // Ship
-    ctx.save();
-    ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
+    ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath();
-    ctx.moveTo(25, 0); ctx.lineTo(-15, -ship.w/2); ctx.lineTo(-8, 0); ctx.lineTo(-15, ship.w/2);
-    ctx.closePath(); ctx.stroke();
-    ctx.fillStyle = "#00E676"; ctx.fillRect(-18, -12, 4, 24); ctx.restore();
+    ctx.moveTo(25, 0); ctx.lineTo(-15, -40); ctx.lineTo(-8, 0); ctx.lineTo(-15, 40);
+    ctx.closePath(); ctx.stroke(); ctx.restore();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
@@ -218,7 +281,6 @@ startBtn.addEventListener("click", async () => {
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         try { await DeviceMotionEvent.requestPermission(); } catch(e) {}
     }
-    document.getElementById("overlay").style.display = "none";
     startLevel(1);
 });
 </script>
