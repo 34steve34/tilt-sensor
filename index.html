@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v44.0</title>
+<title>STAR STREAM v44.0 - Phase Drift Edition</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -50,6 +50,8 @@ let touchL = false, touchR = false, tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0, totalError = 0, startTime = 0, samplingTimer = 0;
 let frameCount = 0;
 
+// Movement State
+let phaseDriftX = 0, phaseDriftY = 0;
 let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0, w: 80 };
 let leadPoint = { x: 0, y: 0 };
 
@@ -102,18 +104,29 @@ function update() {
     if (elapsed >= CONFIG.trialDuration) { endGame(); return; }
 
     frameCount++;
-    // NEW TETHERED SWEEP LOGIC
     let sf = 1 + (currentLevel - 1) * 0.15;
-    let t = frameCount * 0.015 * sf; // Base speed boosted for Level 1
+    let t = frameCount * 0.015 * sf; 
 
-    let desiredX = (canvas.width / 2) + (Math.sin(t * 0.8) * 0.4 + Math.sin(t * 0.3) * 0.1) * canvas.width;
-    let desiredY = (canvas.height / 2) + (Math.cos(t * 0.7) * 0.3 + Math.cos(t * 0.4) * 0.15) * canvas.height;
+    // PHASE DRIFT LOGIC: Slow interference waves ensure path never repeats exactly
+    phaseDriftX = Math.sin(frameCount * 0.002) * 2.5; 
+    phaseDriftY = Math.cos(frameCount * 0.003) * 2.5;
 
-    // Smooth Ease toward Desired
+    // Desired Position (Ghost) with Phase Offsets
+    let desiredX = (canvas.width / 2) + (
+        Math.sin(t * 0.8 + phaseDriftX) * 0.4 + 
+        Math.sin(t * 0.3) * 0.1
+    ) * canvas.width;
+
+    let desiredY = (canvas.height / 2) + (
+        Math.cos(t * 0.7 + phaseDriftY) * 0.3 + 
+        Math.cos(t * 0.4) * 0.15
+    ) * canvas.height;
+
+    // Smooth Ease (Tether) toward Desired - 7% factor for "weight"
     leadPoint.x += (desiredX - leadPoint.x) * 0.07;
     leadPoint.y += (desiredY - leadPoint.y) * 0.07;
 
-    // Scoring
+    // Scoring Logic
     if (elapsed > CONFIG.gracePeriod && now - samplingTimer >= CONFIG.sampleRate) {
         let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
         if (dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
