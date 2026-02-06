@@ -3,20 +3,20 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Movement Lab v1.0</title>
+<title>Movement Lab v2.0</title>
 <style>
-    body { background: #111; color: #00E676; font-family: monospace; margin: 0; overflow: hidden; touch-action: none; }
+    body { background: #080808; color: #00E676; font-family: 'Courier New', monospace; margin: 0; overflow: hidden; touch-action: none; }
     canvas { display: block; }
-    #controls { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 15px; border: 1px solid #00E676; pointer-events: none; }
+    #controls { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 15px; border: 1px solid #00E676; pointer-events: none; }
     .label { font-size: 12px; color: #fff; margin-bottom: 5px; }
 </style>
 </head>
 <body>
 <div id="controls">
-    <div style="font-weight:bold; margin-bottom:10px;">MOVEMENT VISUALIZER</div>
-    <div class="label">Green Dot: Target</div>
-    <div class="label">White Line: Path History</div>
-    <div class="label">Blue Circle: Center Gravity</div>
+    <div style="font-weight:bold; margin-bottom:10px; color:#00E676;">WIDE SWEEP LAB v2.0</div>
+    <div class="label">Primary: Multi-Sine Sweep</div>
+    <div class="label">Boundary: Elastic Tether</div>
+    <div class="label">White Line: 4-Second History</div>
 </div>
 <canvas id="labCanvas"></canvas>
 
@@ -25,7 +25,7 @@ const canvas = document.getElementById("labCanvas");
 const ctx = canvas.getContext("2d");
 
 let width, height;
-let target = { x: 0, y: 0, vx: 0, vy: 0 };
+let target = { x: 0, y: 0 };
 let trail = [];
 let time = 0;
 
@@ -42,63 +42,68 @@ resize();
 function update() {
     time += 0.01;
 
-    // 1. ORGANIC FORCE (Simulated Perlin/Noise via Sine interference)
-    // We use odd primes to ensure the "drifting" force feels non-repeating
-    let forceX = Math.sin(time * 1.7) * 0.5 + Math.sin(time * 3.1) * 0.3;
-    let forceY = Math.cos(time * 1.9) * 0.5 + Math.cos(time * 2.7) * 0.3;
+    // 1. PRIMARY SINE ENGINE (The Broad Strokes)
+    // We use different frequencies for X and Y to create the wide wandering
+    let sweepX = (Math.sin(time * 0.8) * 0.4 + Math.sin(time * 0.3) * 0.1);
+    let sweepY = (Math.cos(time * 0.7) * 0.3 + Math.cos(time * 0.4) * 0.15);
 
-    // 2. RUBBER BAND (Gravity toward center)
-    // The further it drifts, the harder the "center" pulls it back
-    let dx = (width / 2) - target.x;
-    let dy = (height / 2) - target.y;
-    let pullStrength = 0.005; 
+    // Convert normalized sweep to screen position
+    let desiredX = (width / 2) + (sweepX * width);
+    let desiredY = (height / 2) + (sweepY * height);
 
-    target.vx += forceX + (dx * pullStrength);
-    target.vy += forceY + (dy * pullStrength);
+    // 2. THE ELASTIC TETHER
+    // Instead of teleporting the target, we "Ease" toward the sine position.
+    // This allows the "Noise" or "Momentum" to keep it from feeling too rigid.
+    target.x += (desiredX - target.x) * 0.05;
+    target.y += (desiredY - target.y) * 0.05;
 
-    // 3. FRICTION (Prevents infinite acceleration)
-    target.vx *= 0.96;
-    target.vy *= 0.96;
+    // 3. HARD BOUNDARY TETHER (The "Rubber Band")
+    // If it gets within 10% of any edge, it gets pushed back toward center
+    let margin = width * 0.1;
+    if (target.x < margin) target.x += (margin - target.x) * 0.1;
+    if (target.x > width - margin) target.x -= (target.x - (width - margin)) * 0.1;
+    
+    let marginY = height * 0.1;
+    if (target.y < marginY) target.y += (marginY - target.y) * 0.1;
+    if (target.y > height - marginY) target.y -= (target.y - (height - marginY)) * 0.1;
 
-    target.x += target.vx;
-    target.y += target.vy;
-
-    // Store trail
+    // Trail logic (4 seconds at 60fps)
     trail.push({x: target.x, y: target.y});
-    if (trail.length > 120) trail.shift(); // Keep ~2 seconds of history
+    if (trail.length > 240) trail.shift(); 
 }
 
 function draw() {
-    // Clear with slight trail effect
-    ctx.fillStyle = "rgba(17, 17, 17, 1)";
+    ctx.fillStyle = "#080808";
     ctx.fillRect(0, 0, width, height);
 
-    // Draw Center Anchor (Visual Aid)
-    ctx.strokeStyle = "rgba(0, 150, 255, 0.2)";
-    ctx.beginPath();
-    ctx.arc(width/2, height/2, 50, 0, Math.PI*2);
-    ctx.stroke();
+    // Draw the "Playable Area" boundary (Visual Aid)
+    ctx.strokeStyle = "rgba(0, 230, 118, 0.1)";
+    ctx.strokeRect(width * 0.1, height * 0.1, width * 0.8, height * 0.8);
 
-    // Draw Trail
+    // Draw Path
     if (trail.length > 1) {
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+        ctx.setLineDash([5, 5]); // Dashed line for a "radar" look
         ctx.beginPath();
         ctx.moveTo(trail[0].x, trail[0].y);
         for (let i = 1; i < trail.length; i++) {
             ctx.lineTo(trail[i].x, trail[i].y);
         }
         ctx.stroke();
+        ctx.setLineDash([]);
     }
 
     // Draw Target
     ctx.fillStyle = "#00E676";
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = "#00E676";
     ctx.beginPath();
-    ctx.arc(target.x, target.y, 10, 0, Math.PI*2);
+    ctx.arc(target.x, target.y, 12, 0, Math.PI*2);
     ctx.fill();
-    ctx.shadowBlur = 0;
+    
+    // Core of target
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(target.x, target.y, 4, 0, Math.PI*2);
+    ctx.fill();
 }
 
 function loop() {
