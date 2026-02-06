@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v44.1</title>
+<title>STAR STREAM v44.2</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -13,7 +13,7 @@
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
         text-align: center; z-index: 100; background: rgba(0,0,0,0.9); padding: 25px; border: 2px solid #00E676;
     }
-    .briefing { color: #fff; font-size: 11px; margin-bottom: 20px; line-height: 1.4; text-align: left; border-left: 3px solid #00E676; padding-left: 12px; }
+    .briefing { color: #fff; font-size: 10px; margin-bottom: 20px; line-height: 1.4; text-align: left; border-left: 3px solid #00E676; padding-left: 12px; }
     #startBtn { padding: 15px 30px; font-size: 20px; background: #00E676; color: #000; border: none; cursor: pointer; font-weight: bold; }
     #results {
         position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
@@ -22,7 +22,7 @@
     .warning-orange { color: #FFA500 !important; }
     #deathScreen {
         position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-        background: #FF4500; display: none; z-index: 200; align-items: center; justify-content: center;
+        background: rgba(255, 69, 0, 0.8); display: none; z-index: 200; align-items: center; justify-content: center;
         color: #fff; font-size: 32px; font-weight: bold; text-align: center;
     }
 </style>
@@ -34,16 +34,16 @@
     TIME: <span id="timer">30.00</span>s | SCORE: <span id="scoreDisp">200</span>
 </div>
 
-<div id="deathScreen">HULL BREACHED<br>ALL SOULS LOST</div>
+<div id="deathScreen">HULL BREACHED<br>AUTO-RESTARTING...</div>
 
 <div id="overlay">
-    <h1 style="margin-bottom: 10px; font-size: 18px;">TACTICAL BRIEFING</h1>
+    <h1 style="margin-bottom: 10px; font-size: 16px;">STABILITY PATCH v44.2</h1>
     <div class="briefing">
-        - <b>TILT:</b> Move ship (Stay on Green Target)<br>
+        - <b>TILT:</b> Movement (Zero Recoil physics)<br>
         - <b>LEFT SIDE:</b> Hold to Rotate | Double-Tap to switch direction<br>
-        - <b>RIGHT SIDE:</b> Tap to fire NEON CYAN BULLETS<br>
-        - <b>DANGER:</b> Kill <u>ORANGE PERIMETER GLOW</u> (3 shots) or die.<br>
-        - <b>SLOW-MO:</b> Game slows 30% during mission evaluation.
+        - <b>RIGHT SIDE:</b> Tap to fire Cyan Tracers<br>
+        - <b>DANGER:</b> Neutralize <u>TRANSLUCENT BLOOM</u> (3 hits) on the border.<br>
+        - <b>DEATH:</b> Auto-restarts current level.
     </div>
     <button id="startBtn">ENGAGE</button>
 </div>
@@ -62,19 +62,19 @@ const startBtn = document.getElementById("startBtn");
 const nextLevelBtn = document.getElementById("nextLevelBtn");
 
 let gameRunning = false, currentLevel = 1, frameCount = 0;
-let timeScale = 1.0; 
-let touchL = false, lastLTap = 0, rotDir = 1;
+let timeScale = 1.0, touchL = false, lastLTap = 0, rotDir = 1;
 let tiltX = 0, tiltY = 0, totalError = 0, startTime = 0;
 
 let bullets = [], stars = [];
 let threat = { active: false, angle: 0, hits: 0, startTime: 0, flicker: 0, lastTrigger: 0 };
 let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0 };
-let leadPoint = { x: 0, y: 0 }, phaseDriftX = 0, phaseDriftY = 0;
+let leadPoint = { x: 0, y: 0 };
 
 const CONFIG = {
-    rotTorque: 0.0022, driftSens: 0.35, driftFriction: 0.85, rotFriction: 0.92,
+    rotTorque: 0.0018, // Slightly lower for smoother control
+    driftSens: 0.35, driftFriction: 0.88, rotFriction: 0.90,
     starCount: 500, speedZ: 0.02, trialDuration: 30000, 
-    perfectZone: 12, bulletSpeed: 18
+    perfectZone: 12, bulletSpeed: 20
 };
 
 function resize() {
@@ -90,9 +90,7 @@ window.addEventListener("touchstart", (e) => {
             let now = Date.now();
             if (now - lastLTap < 300) rotDir *= -1;
             lastLTap = now;
-        } else {
-            fireBullet();
-        }
+        } else { fireBullet(); }
     }
     e.preventDefault();
 }, {passive: false});
@@ -108,10 +106,15 @@ window.addEventListener("touchend", (e) => {
 
 window.addEventListener("devicemotion", (e) => {
     const acc = e.accelerationIncludingGravity;
-    if (acc && gameRunning) { tiltX = (acc.y || 0); tiltY = (acc.x || 0) - 6; }
+    if (acc && gameRunning) { 
+        // Zero-gravity drift feel
+        tiltX = (acc.y || 0); 
+        tiltY = (acc.x || 0) - 6; 
+    }
 });
 
 function fireBullet() {
+    // Bullet is decoupled from ship velocity to prevent "speed up" glitch
     bullets.push({
         x: ship.x, y: ship.y,
         vx: Math.cos(ship.angle) * CONFIG.bulletSpeed,
@@ -164,12 +167,9 @@ function update() {
     let sf = 1 + (currentLevel - 1) * 0.10;
     let t = frameCount * 0.015 * sf; 
 
-    // Phase Drift for unpredictability
-    phaseDriftX = Math.sin(frameCount * 0.002) * 2.5;
-    phaseDriftY = Math.cos(frameCount * 0.003) * 2.5;
-
-    let dX = (canvas.width/2) + (Math.sin(t*0.8 + phaseDriftX)*0.4)*canvas.width;
-    let dY = (canvas.height/2) + (Math.cos(t*0.7 + phaseDriftY)*0.3)*canvas.height;
+    // Smooth sinusoidal motion
+    let dX = (canvas.width/2) + (Math.sin(t*0.8)*0.4)*canvas.width;
+    let dY = (canvas.height/2) + (Math.cos(t*0.7)*0.3)*canvas.height;
     leadPoint.x += (dX - leadPoint.x) * (0.07 * timeScale);
     leadPoint.y += (dY - leadPoint.y) * (0.07 * timeScale);
 
@@ -181,23 +181,30 @@ function update() {
     sDisp.innerText = score;
     sDisp.className = (score < 185) ? "warning-orange" : "";
 
-    if (touchL) ship.vAngle += CONFIG.rotTorque * rotDir * timeScale;
-    ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
-    ship.vx += tiltX * CONFIG.driftSens * timeScale; ship.vy += tiltY * CONFIG.driftSens * timeScale;
-    ship.x += ship.vx; ship.y += ship.vy;
-    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
+    // Physics - Simplified for stability
+    if (touchL) ship.vAngle += CONFIG.rotTorque * rotDir;
+    ship.angle += ship.vAngle; 
+    ship.vAngle *= CONFIG.rotFriction;
 
+    ship.vx += tiltX * CONFIG.driftSens; 
+    ship.vy += tiltY * CONFIG.driftSens;
+    ship.x += ship.vx; 
+    ship.y += ship.vy;
+    ship.vx *= CONFIG.driftFriction; 
+    ship.vy *= CONFIG.driftFriction;
+
+    // Bullet Logic
     for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
-        b.x += b.vx * timeScale; b.y += b.vy * timeScale;
+        b.x += b.vx; b.y += b.vy;
         
         if (threat.active) {
             let bAng = Math.atan2(b.y - canvas.height/2, b.x - canvas.width/2);
             let diff = Math.abs(((bAng - threat.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
-            let distToEdge = Math.hypot(b.x - canvas.width/2, b.y - canvas.height/2);
+            let dToCenter = Math.hypot(b.x - canvas.width/2, b.y - canvas.height/2);
             
-            if (distToEdge > Math.max(canvas.width, canvas.height) * 0.45 && diff < 0.4) {
-                threat.hits++; threat.flicker = 8;
+            if (dToCenter > Math.max(canvas.width, canvas.height) * 0.4 && diff < 0.5) {
+                threat.hits++; threat.flicker = 10;
                 bullets.splice(i, 1);
                 if (threat.hits >= 3) threat.active = false;
                 continue;
@@ -217,7 +224,7 @@ function die() {
     document.getElementById("deathScreen").style.display = "flex";
     setTimeout(() => {
         document.getElementById("deathScreen").style.display = "none";
-        startLevel(currentLevel);
+        startLevel(currentLevel); // Auto-restart level
     }, 2000);
 }
 
@@ -244,17 +251,23 @@ function draw() {
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning && timeScale === 1.0) return;
     
-    // ORANGE GLOW (FIXED PERIMETER ARC)
-    if (threat.active && threat.flicker % 2 === 0) {
+    // TRANSLUCENT BLOOM (Atmospheric Glow)
+    if (threat.active) {
         ctx.save();
         ctx.translate(canvas.width/2, canvas.height/2);
-        ctx.strokeStyle = "#FF8C00";
-        ctx.lineWidth = 100; 
-        ctx.shadowBlur = 50; ctx.shadowColor = "#FF4500";
+        let pulse = (Math.sin(Date.now() * 0.01) * 0.2) + 0.5;
+        let alpha = threat.flicker > 0 ? 0.9 : pulse;
+        
+        let grad = ctx.createRadialGradient(0, 0, Math.min(canvas.width, canvas.height) * 0.4, 0, 0, Math.max(canvas.width, canvas.height) * 0.6);
+        grad.addColorStop(0, "rgba(255, 69, 0, 0)");
+        grad.addColorStop(1, `rgba(255, 69, 0, ${alpha * 0.8})`);
+        
+        ctx.fillStyle = grad;
         ctx.beginPath();
-        let radius = Math.max(canvas.width, canvas.height) * 0.48;
-        ctx.arc(0, 0, radius, threat.angle - 0.45, threat.angle + 0.45);
-        ctx.stroke();
+        // Draw the bloom segment
+        ctx.moveTo(0,0);
+        ctx.arc(0, 0, Math.max(canvas.width, canvas.height), threat.angle - 0.5, threat.angle + 0.5);
+        ctx.fill();
         ctx.restore();
     }
 
@@ -267,12 +280,10 @@ function draw() {
     ctx.fillStyle = "rgba(0, 230, 118, 0.8)";
     ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 12, 0, Math.PI * 2); ctx.fill();
 
-    // Neon Cyan Bullets
+    // Bullets
     bullets.forEach(b => {
         ctx.fillStyle = "#00FFFF";
-        ctx.shadowBlur = 10; ctx.shadowColor = "#00FFFF";
         ctx.fillRect(b.x-2, b.y-2, 6, 6);
-        ctx.shadowBlur = 0;
     });
 
     // Ship
