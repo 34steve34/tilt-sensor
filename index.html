@@ -3,35 +3,38 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v42.0</title>
+<title>STAR STREAM v43.0</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
     #gameCanvas { display: block; }
-    #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 5vw; }
+    #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 20px; }
     #startBtn {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        padding: 20px 40px; font-size: 24px; background: #00E676; color: #000;
+        padding: 25px 50px; font-size: 24px; background: #00E676; color: #000;
         border: none; border-radius: 8px; cursor: pointer; z-index: 100; font-weight: bold;
     }
     #results {
         position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
-        text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110; width: 80%;
+        text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110; min-width: 320px;
     }
+    .warning-orange { color: #FFA500 !important; }
+    .warning-red { color: #FF0000 !important; font-weight: bold; }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="ui">
-    LVL: <span id="lvlDisp">1</span> | TIME: <span id="timer">30</span>s<br>
+    STAR STREAM v43.0 | LVL: <span id="lvlDisp">1</span><br>
+    TIME: <span id="timer">30.00</span>s<br>
     SCORE: <span id="score">200</span>
 </div>
 
 <div id="results">
     <h1>TRIAL COMPLETE</h1>
-    <h2 id="finalScore" style="font-size: 15vw; color: #fff;">0</h2>
-    <p id="qualifyMsg" style="margin-bottom: 20px; font-size: 4vw;"></p>
-    <button id="nextLevelBtn" style="padding: 15px 30px; font-size: 20px; cursor:pointer; background:#00E676; border:none; font-weight:bold;">NEXT TRIAL</button>
+    <h2 id="finalScore" style="font-size: 64px; margin: 10px 0; color: #fff;">0</h2>
+    <p id="qualifyMsg" style="margin-bottom: 20px;"></p>
+    <button id="nextLevelBtn" style="padding: 15px 30px; font-size: 18px; cursor:pointer; background:#00E676; border:none; font-weight:bold;">NEXT TRIAL</button>
 </div>
 
 <button id="startBtn">ENGAGE ENGINES</button>
@@ -41,21 +44,21 @@ const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 const nextLevelBtn = document.getElementById("nextLevelBtn");
+const timerDisp = document.getElementById("timer");
 
 let gameRunning = false;
 let currentLevel = 1;
 let touchL = false, touchR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
-let frameCount = 0;
 let totalError = 0; 
 let startTime = 0;
 let samplingTimer = 0;
 
-// Universal Coordinate System (0 to 1000)
-let grid = { w: 1000, h: 1000, scale: 1 };
-let ship = { x: 500, y: 500, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0, w: 80 };
-let leadPoint = { x: 500, y: 500, vx: 2, vy: 2 };
+// Reverting to Original Pixel Scaling
+let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0, w: 80 };
+let leadPoint = { x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
+let targetHeading = 0;
 
 const CONFIG = {
     rotTorque: 0.0022,    
@@ -67,7 +70,7 @@ const CONFIG = {
     trialDuration: 30000,
     sampleRate: 50, 
     gracePeriod: 5000,
-    perfectZoneUnits: 12 // Consistent across all screens
+    perfectZone: 12
 };
 
 let stars = [];
@@ -75,16 +78,11 @@ let stars = [];
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    // Calculate scale to fit 1000 units into the smallest screen dimension
-    grid.scale = Math.min(canvas.width, canvas.height) / 1000;
+    ship.x = canvas.width / 2; ship.y = canvas.height / 2;
+    leadPoint.x = canvas.width / 2; leadPoint.y = canvas.height / 2;
 }
 window.addEventListener("resize", resize);
 resize();
-
-// Conversion Helpers
-const toPX = (u) => u * grid.scale;
-const centerOffX = () => (canvas.width - toPX(1000)) / 2;
-const centerOffY = () => (canvas.height - toPX(1000)) / 2;
 
 window.addEventListener("touchstart", (e) => {
     if (!gameRunning) return;
@@ -115,33 +113,43 @@ function update() {
     let now = Date.now();
     let elapsed = now - startTime;
     let remaining = Math.max(0, (CONFIG.trialDuration - elapsed) / 1000);
-    document.getElementById("timer").innerText = Math.ceil(remaining);
+    
+    timerDisp.innerText = remaining.toFixed(2);
+    if (remaining <= 5) timerDisp.className = "warning-red";
+    else if (remaining <= 15) timerDisp.className = "warning-orange";
+    else timerDisp.className = "";
 
     if (elapsed >= CONFIG.trialDuration) { endGame(); return; }
 
-    frameCount++;
+    // ORGANIC NOISE MOVEMENT
+    let sf = 2.5 + (currentLevel - 1) * 0.4; // Speed scales 15% roughly
     
-    // NEW MEANDER: Velocity-based (Constant Speed)
-    let sf = 1 + (currentLevel - 1) * 0.15;
-    leadPoint.x += leadPoint.vx * sf;
-    leadPoint.y += leadPoint.vy * sf;
+    // Occasionally pick a new target heading
+    if (Math.random() < 0.03) {
+        targetHeading += (Math.random() - 0.5) * Math.PI; 
+    }
 
-    // Bounce & Randomize direction to keep speed high
-    if (leadPoint.x < 100 || leadPoint.x > 900) { 
-        leadPoint.vx *= -1; 
-        leadPoint.vy += (Math.random() - 0.5) * 2;
-    }
-    if (leadPoint.y < 100 || leadPoint.y > 900) { 
-        leadPoint.vy *= -1; 
-        leadPoint.vx += (Math.random() - 0.5) * 2;
-    }
+    // Edge Avoidance (Soft push back to center)
+    let margin = 100;
+    if (leadPoint.x < margin) targetHeading = 0;
+    if (leadPoint.x > canvas.width - margin) targetHeading = Math.PI;
+    if (leadPoint.y < margin) targetHeading = Math.PI/2;
+    if (leadPoint.y > canvas.height - margin) targetHeading = -Math.PI/2;
+
+    // Smoothly turn toward heading
+    leadPoint.angle += (targetHeading - leadPoint.angle) * 0.05;
+    leadPoint.vx = Math.cos(leadPoint.angle) * sf;
+    leadPoint.vy = Math.sin(leadPoint.angle) * sf;
+    
+    leadPoint.x += leadPoint.vx;
+    leadPoint.y += leadPoint.vy;
 
     // Scoring
     if (elapsed > CONFIG.gracePeriod && now - samplingTimer >= CONFIG.sampleRate) {
         let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
-        if (dist > CONFIG.perfectZoneUnits) totalError += (dist - CONFIG.perfectZoneUnits);
+        if (dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
         samplingTimer = now;
-        document.getElementById("score").innerText = Math.floor(Math.max(0, 200 - (totalError / 500)));
+        document.getElementById("score").innerText = Math.floor(Math.max(0, 200 - (totalError / 650)));
     }
 
     // Ship Physics
@@ -151,10 +159,8 @@ function update() {
     ship.vx += tiltX * CONFIG.driftSens; ship.vy += tiltY * CONFIG.driftSens;
     ship.x += ship.vx; ship.y += ship.vy;
     ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
-    
-    // Contain in grid
-    ship.x = Math.max(0, Math.min(1000, ship.x));
-    ship.y = Math.max(0, Math.min(1000, ship.y));
+    ship.x = Math.max(0, Math.min(canvas.width, ship.x));
+    ship.y = Math.max(0, Math.min(canvas.height, ship.y));
 
     for (let i = stars.length - 1; i >= 0; i--) {
         let s = stars[i]; s.z -= CONFIG.speedZ;
@@ -168,10 +174,10 @@ function endGame() {
     document.getElementById("finalScore").innerText = final;
     document.getElementById("results").style.display = "block";
     if (final >= 180) {
-        document.getElementById("qualifyMsg").innerText = "UNLOCKED LEVEL " + (currentLevel+1);
+        document.getElementById("qualifyMsg").innerText = "ACE RATING - NEXT LEVEL OPEN";
         nextLevelBtn.onclick = () => startLevel(currentLevel + 1);
     } else {
-        document.getElementById("qualifyMsg").innerText = "RETRY FOR ACE RATING";
+        document.getElementById("qualifyMsg").innerText = "RATING LOW - RETRY";
         nextLevelBtn.onclick = () => startLevel(currentLevel);
     }
 }
@@ -182,7 +188,7 @@ function startLevel(lvl) {
     document.getElementById("results").style.display = "none";
     stars = [];
     for(let i=0; i<CONFIG.starCount; i++) spawnStar(Math.random());
-    totalError = 0; ship.x = 500; ship.y = 500;
+    totalError = 0;
     startTime = Date.now(); samplingTimer = startTime;
     gameRunning = true;
 }
@@ -191,35 +197,28 @@ function draw() {
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
     
-    let ox = centerOffX(); let oy = centerOffY();
-
-    // Target
-    ctx.fillStyle = "#00E676";
-    ctx.beginPath(); 
-    ctx.arc(ox + toPX(leadPoint.x), oy + toPX(leadPoint.y), toPX(10), 0, Math.PI*2); 
-    ctx.fill();
+    // Target Hub
+    ctx.fillStyle = "rgba(0, 230, 118, 0.8)";
+    ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 8, 0, Math.PI * 2); ctx.fill();
 
     // Stars
     stars.forEach(s => {
         let scale = 1 / s.z;
-        let px = ox + toPX(s.originX + s.xOff * scale);
-        let py = oy + toPX(s.originY + s.yOff * scale);
+        let px = s.originX + (s.xOff * scale);
+        let py = s.originY + (s.yOff * scale);
         ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.8, scale/10)})`;
-        ctx.fillRect(px, py, toPX(s.size * scale), toPX(s.size * scale));
+        ctx.fillRect(px, py, s.size * scale, s.size * scale);
     });
 
     // Ship
     ctx.save();
-    ctx.translate(ox + toPX(ship.x), oy + toPX(ship.y));
+    ctx.translate(ship.x, ship.y);
     ctx.rotate(ship.angle);
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = toPX(3);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(toPX(25), 0);
-    ctx.lineTo(toPX(-15), toPX(-ship.w/2));
-    ctx.lineTo(toPX(-8), 0);
-    ctx.lineTo(toPX(-15), toPX(ship.w/2));
+    ctx.moveTo(25, 0); ctx.lineTo(-15, -ship.w/2); ctx.lineTo(-8, 0); ctx.lineTo(-15, ship.w/2);
     ctx.closePath(); ctx.stroke();
-    ctx.restore();
+    ctx.fillStyle = "#00E676"; ctx.fillRect(-18, -12, 4, 24); ctx.restore();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
