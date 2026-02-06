@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v44.4</title>
+<title>STAR STREAM v44.5</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -34,18 +34,17 @@
     TIME: <span id="timer">30.00</span>s | SCORE: <span id="scoreDisp">200</span>
 </div>
 
-<div id="deathScreen">HULL BREACHED<br>STABILIZING POSITION...</div>
+<div id="deathScreen">HULL BREACHED<br>SYSTEM REBOOTING...</div>
 
 <div id="overlay">
-    <h1 style="margin-bottom: 10px; font-size: 16px;">STABILITY PATCH v44.4</h1>
+    <h1 style="margin-bottom: 10px; font-size: 16px;">PHYSICS RE-ALIGNMENT v44.5</h1>
     <div class="briefing">
-        - <b>TILT:</b> Move ship (Drift mechanics)<br>
-        - <b>LEFT SIDE:</b> Hold to Rotate | Double-Tap to switch direction<br>
-        - <b>RIGHT SIDE:</b> Tap to fire Cyan Tracers<br>
-        - <b>TIME DILATION:</b> Target slows 50% during Orange Glow events.<br>
-        - <b>RECOVERY:</b> Ship position resets on every launch.
+        - <b>ROTATION:</b> Speed x2. Isolated from drift vectors.<br>
+        - <b>DRIFT:</b> Tilt-based movement (Clean 2D translation).<br>
+        - <b>COMBAT:</b> 50% slow-mo on target during Orange Bloom.<br>
+        - <b>AUTO-START:</b> Level restarts immediately on death.
     </div>
-    <button id="startBtn">ENGAGE</button>
+    <button id="startBtn">ENGAGE ENGINES</button>
 </div>
 
 <div id="results">
@@ -71,9 +70,12 @@ let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0 };
 let leadPoint = { x: 0, y: 0 };
 
 const CONFIG = {
-    rotTorque: 0.0015, driftSens: 0.35, driftFriction: 0.88, rotFriction: 0.88,
+    rotTorque: 0.0045, // DOUBLED FROM 0.0018-0.0022
+    driftSens: 0.35, 
+    driftFriction: 0.88, 
+    rotFriction: 0.82, // Higher friction to prevent wild spinning
     starCount: 500, speedZ: 0.02, trialDuration: 30000, 
-    perfectZone: 12, bulletSpeed: 22
+    perfectZone: 15, bulletSpeed: 25
 };
 
 function resize() {
@@ -106,7 +108,10 @@ window.addEventListener("touchend", (e) => {
 
 window.addEventListener("devicemotion", (e) => {
     const acc = e.accelerationIncludingGravity;
-    if (acc && gameRunning) { tiltX = (acc.y || 0); tiltY = (acc.x || 0) - 6; }
+    if (acc && gameRunning) { 
+        tiltX = (acc.y || 0); 
+        tiltY = (acc.x || 0) - 6; 
+    }
 });
 
 function fireBullet() {
@@ -154,35 +159,34 @@ function update() {
 
     if (elapsed >= CONFIG.trialDuration) { evalSlowdown = 0.7; endGame(); return; }
 
-    // TARGET SLOWDOWN LOGIC
-    // If threat is active, target moves at 50% speed. Otherwise, normal.
     let targetSpeedScale = threat.active ? 0.5 : 1.0;
-    
     frameCount += (1 * evalSlowdown * targetSpeedScale);
     let sf = 1 + (currentLevel - 1) * 0.10;
-    let t = frameCount * 0.012 * sf; // Base target speed slightly reduced for fairness
+    let t = frameCount * 0.012 * sf;
 
     let dX = (canvas.width/2) + (Math.sin(t*0.8)*0.4)*canvas.width;
     let dY = (canvas.height/2) + (Math.cos(t*0.7)*0.3)*canvas.height;
     
-    // Smooth tracking of the lead point
     leadPoint.x += (dX - leadPoint.x) * (0.07 * evalSlowdown * targetSpeedScale);
     leadPoint.y += (dY - leadPoint.y) * (0.07 * evalSlowdown * targetSpeedScale);
 
     let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
     if (elapsed > 3000 && dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
     
-    let score = Math.floor(Math.max(0, 200 - (totalError / 850)));
+    let score = Math.floor(Math.max(0, 200 - (totalError / 900)));
     let sDisp = document.getElementById("scoreDisp");
     sDisp.innerText = score;
-    sDisp.className = (score < 185) ? "warning-orange" : "";
 
-    // PURE ROTATION PHYSICS (Decoupled from drift)
-    if (touchL) ship.vAngle += CONFIG.rotTorque * rotDir;
+    // --- PURE VECTOR ISOLATION ---
+    // Rotation is strictly Angular (Radians)
+    if (touchL) {
+        ship.vAngle += CONFIG.rotTorque * rotDir;
+    }
     ship.angle += ship.vAngle; 
     ship.vAngle *= CONFIG.rotFriction;
 
-    // PURE DRIFT PHYSICS (Decoupled from rotation)
+    // Translation is strictly Linear (Pixels)
+    // No 'ship.angle' math is used in vx/vy calculation to prevent the "lunging" bug
     ship.vx += tiltX * CONFIG.driftSens; 
     ship.vy += tiltY * CONFIG.driftSens;
     ship.x += ship.vx; 
@@ -193,7 +197,7 @@ function update() {
     ship.x = Math.max(0, Math.min(canvas.width, ship.x));
     ship.y = Math.max(0, Math.min(canvas.height, ship.y));
 
-    // Bullet Logic
+    // Bullet Physics
     for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
         b.x += b.vx; b.y += b.vy;
@@ -202,8 +206,7 @@ function update() {
             let bAng = Math.atan2(b.y - canvas.height/2, b.x - canvas.width/2);
             let diff = Math.abs(((bAng - threat.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
             let dToCenter = Math.hypot(b.x - canvas.width/2, b.y - canvas.height/2);
-            
-            if (dToCenter > Math.max(canvas.width, canvas.height) * 0.4 && diff < 0.6) {
+            if (dToCenter > Math.max(canvas.width, canvas.height) * 0.35 && diff < 0.7) {
                 threat.hits++; threat.flicker = 10;
                 bullets.splice(i, 1);
                 if (threat.hits >= 3) threat.active = false;
@@ -225,7 +228,7 @@ function die() {
     setTimeout(() => {
         document.getElementById("deathScreen").style.display = "none";
         startLevel(currentLevel);
-    }, 2000);
+    }, 1500);
 }
 
 function endGame() {
@@ -253,19 +256,20 @@ function draw() {
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning && evalSlowdown === 1.0) return;
     
-    // VOLUMETRIC BLOOM (360-degree radial fade)
     if (threat.active) {
         ctx.save();
         ctx.translate(canvas.width/2, canvas.height/2);
-        let targetX = Math.cos(threat.angle) * Math.max(canvas.width, canvas.height) * 0.5;
-        let targetY = Math.sin(threat.angle) * Math.max(canvas.width, canvas.height) * 0.5;
-        let pulse = (Math.sin(Date.now() * 0.01) * 0.2) + 0.5;
-        let alpha = threat.flicker > 0 ? 0.9 : pulse;
-        let bloomSize = Math.max(canvas.width, canvas.height) * 0.45;
+        let targetX = Math.cos(threat.angle) * Math.max(canvas.width, canvas.height) * 0.45;
+        let targetY = Math.sin(threat.angle) * Math.max(canvas.width, canvas.height) * 0.45;
+        let pulse = (Math.sin(Date.now() * 0.01) * 0.25) + 0.55;
+        let alpha = threat.flicker > 0 ? 1.0 : pulse;
+        let bloomSize = Math.max(canvas.width, canvas.height) * 0.5;
+        
         let grad = ctx.createRadialGradient(targetX, targetY, 0, targetX, targetY, bloomSize);
-        grad.addColorStop(0, `rgba(255, 100, 0, ${alpha})`);
-        grad.addColorStop(0.4, `rgba(255, 60, 0, ${alpha * 0.2})`);
+        grad.addColorStop(0, `rgba(255, 120, 0, ${alpha})`);
+        grad.addColorStop(0.3, `rgba(255, 60, 0, ${alpha * 0.4})`);
         grad.addColorStop(1, "rgba(255, 0, 0, 0)");
+        
         ctx.fillStyle = grad;
         ctx.globalCompositeOperation = "screen";
         ctx.beginPath(); ctx.arc(targetX, targetY, bloomSize, 0, Math.PI * 2); ctx.fill();
@@ -279,11 +283,11 @@ function draw() {
     });
 
     ctx.fillStyle = "rgba(0, 230, 118, 0.8)";
-    ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 12, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 14, 0, Math.PI * 2); ctx.fill();
 
     bullets.forEach(b => {
         ctx.fillStyle = "#00FFFF";
-        ctx.fillRect(b.x-2, b.y-2, 6, 6);
+        ctx.fillRect(b.x-3, b.y-3, 7, 7);
     });
 
     // Ship
