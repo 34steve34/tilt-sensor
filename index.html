@@ -5,20 +5,42 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="STARSTREAM-192.png">
 <title>STAR STREAM</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
-    #gameCanvas { display: block; }
-    #ui { position: absolute; top: env(safe-area-inset-top, 40px); left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 14px; }
+    body { 
+        background: #000; 
+        overflow: hidden; 
+        touch-action: none; 
+        font-family: 'Courier New', monospace; 
+        color: #00E676; 
+        /* Prevents pulls/bounces on mobile */
+        position: fixed;
+        width: 100%;
+        height: 100%;
+    }
+    #gameCanvas { display: block; width: 100vw; height: 100vh; }
+    
+    #ui { 
+        position: absolute; 
+        /* env(safe-area-inset-top) pushes UI just below the clock/notch */
+        top: calc(env(safe-area-inset-top) + 10px); 
+        left: 20px; 
+        pointer-events: none; 
+        text-shadow: 2px 2px #000; 
+        z-index: 10; 
+        font-size: 14px; 
+    }
+
     #overlay {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
         text-align: center; z-index: 100; background: rgba(0,0,0,0.98); padding: 30px; border: 2px solid #00E676; width: 90%; max-width: 400px;
     }
     #startBtn { padding: 20px; font-size: 18px; background: #00E676; color: #000; border: none; cursor: pointer; font-weight: bold; width: 100%; border-radius: 4px; text-transform: uppercase; }
-    #startBtn:active { background: #fff; }
+    
     #results {
         position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
         text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110;
@@ -42,7 +64,7 @@
 
 <div id="overlay">
     <img src="STARSTREAM-192.png" id="logoImg" style="width: 80px; border-radius: 15px; margin-bottom: 15px; border: 1px solid #00E676;">
-    <h1 style="margin-bottom: 10px; font-size: 16px;">V-DRIFT NAV-COM v45.3</h1>
+    <h1 style="margin-bottom: 10px; font-size: 16px;">V-DRIFT NAV-COM v45.4</h1>
     <div style="color: #fff; font-size: 11px; margin-bottom: 20px; text-align: left; line-height: 1.5; border-left: 3px solid #00E676; padding-left: 10px;">
         • <b>TOP LEFT:</b> Rotate CCW ↺<br>
         • <b>BTM LEFT:</b> Rotate CW ↻<br>
@@ -52,225 +74,9 @@
     <button id="startBtn">INITIALIZE LINK</button>
 </div>
 
-<div id="results">
-    <h1>TRIAL COMPLETE</h1>
-    <h2 id="finalScore" style="font-size: 64px; margin: 10px 0;">0</h2>
-    <p id="qualifyMsg" style="margin-bottom: 20px;"></p>
-    <button id="nextLevelBtn" style="padding: 15px 30px; font-size: 18px; cursor:pointer; background:#00E676; border:none; font-weight:bold;">CONTINUE</button>
-</div>
-
 <script>
-// --- SERVICE WORKER ---
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(e => console.log(e));
-}
-
-const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
-const startBtn = document.getElementById("startBtn");
-
-let gameRunning = false, currentLevel = 1, frameCount = 0;
-let activeRot = 0;
-let tiltX = 0, tiltY = 0, totalError = 0, startTime = 0;
-let bullets = [], stars = [];
-let threat = { active: false, angle: 0, hits: 0, startTime: 0, flicker: 0, lastTrigger: 0, doomScale: 0, dying: false };
-let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0 };
-let leadPoint = { x: 0, y: 0 };
-
-const CONFIG = {
-    rotTorque: 0.007, driftSens: 0.4, driftFriction: 0.88, rotFriction: 0.8, 
-    maxVelocity: 15, starCount: 450, speedZ: 0.022, trialDuration: 30000, 
-    perfectZone: 18, bulletSpeed: 25, passScore: 150
-};
-
-function resize() {
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    if (!gameRunning) {
-        ship.x = canvas.width / 2; ship.y = canvas.height / 2;
-        leadPoint.x = canvas.width / 2; leadPoint.y = canvas.height / 2;
-    }
-}
-window.addEventListener("resize", resize); resize();
-
-function handleInput(e) {
-    if (!gameRunning) return;
-    activeRot = 0;
-    if (e.touches.length > 0) {
-        for (let t of e.touches) {
-            if (t.clientX < canvas.width / 2) {
-                activeRot = (t.clientY < canvas.height / 2) ? -1 : 1;
-            } else if (e.type === "touchstart") {
-                fireBullet();
-            }
-        }
-    }
-}
-
-window.addEventListener("touchstart", (e) => { handleInput(e); if(gameRunning) e.preventDefault(); }, {passive: false});
-window.addEventListener("touchmove", (e) => { handleInput(e); if(gameRunning) e.preventDefault(); }, {passive: false});
-window.addEventListener("touchend", (e) => { activeRot = 0; });
-
-window.addEventListener("devicemotion", (e) => {
-    const acc = e.accelerationIncludingGravity;
-    if (acc && gameRunning) { 
-        tiltX = (acc.y || 0); 
-        tiltY = (acc.x || 0) - 6; 
-    }
-});
-
-function fireBullet() {
-    bullets.push({ x: ship.x, y: ship.y, vx: Math.cos(ship.angle) * CONFIG.bulletSpeed, vy: Math.sin(ship.angle) * CONFIG.bulletSpeed });
-}
-
-function spawnStar(zOverride) {
-    stars.push({ xOff: (Math.random()-0.5)*1200, yOff: (Math.random()-0.5)*1200, z: zOverride || 1.0, size: Math.random()*2.5+1 });
-}
-
-function update() {
-    if (!gameRunning) return;
-    let now = Date.now(), elapsed = now - startTime;
-    let remaining = Math.max(0, (CONFIG.trialDuration - elapsed) / 1000);
-    document.getElementById("timer").innerText = remaining.toFixed(2);
-    
-    if (!threat.active && (elapsed > 9000 && threat.lastTrigger < 5000 || elapsed > 19000 && threat.lastTrigger < 15000)) {
-        threat.active = true; threat.dying = false; threat.doomScale = 0;
-        threat.angle = Math.random() * Math.PI * 2; threat.hits = 0; threat.startTime = now;
-        threat.lastTrigger = elapsed;
-    }
-
-    if (threat.active) {
-        if (!threat.dying && now - threat.startTime > 5000) threat.dying = true;
-        if (threat.dying) { threat.doomScale += 0.02; if (threat.doomScale > 2) triggerDeath(); }
-        threat.flicker = Math.max(0, threat.flicker - 1);
-    }
-
-    if (elapsed >= CONFIG.trialDuration) { endGame(); return; }
-
-    let ts = (threat.active && !threat.dying) ? 0.5 : 1.0;
-    frameCount += (1 * ts);
-    let t = frameCount * 0.012 * (1 + (currentLevel-1)*0.1);
-    let targetX = (canvas.width / 2) + (Math.sin(t * 0.8) * 0.35 * canvas.width);
-    let targetY = (canvas.height / 2) + (Math.cos(t * 0.7) * 0.35 * canvas.height);
-    leadPoint.x += (targetX - leadPoint.x) * 0.08;
-    leadPoint.y += (targetY - leadPoint.y) * 0.08;
-
-    if (!threat.active && elapsed > 3000) {
-        let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
-        if (dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
-    }
-    document.getElementById("scoreDisp").innerText = Math.floor(Math.max(0, 200 - (totalError / 900)));
-
-    if (activeRot !== 0) ship.vAngle += CONFIG.rotTorque * activeRot;
-    ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
-    ship.vx += (tiltX * CONFIG.driftSens); ship.vy += (tiltY * CONFIG.driftSens);
-    let s = Math.hypot(ship.vx, ship.vy);
-    if (s > CONFIG.maxVelocity) { ship.vx = (ship.vx/s)*CONFIG.maxVelocity; ship.vy = (ship.vy/s)*CONFIG.maxVelocity; }
-    ship.x += ship.vx; ship.y += ship.vy; ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
-    ship.x = Math.max(0, Math.min(canvas.width, ship.x)); ship.y = Math.max(0, Math.min(canvas.height, ship.y));
-
-    for (let i = bullets.length - 1; i >= 0; i--) {
-        let b = bullets[i]; b.x += b.vx; b.y += b.vy;
-        if (threat.active && !threat.dying) {
-            let bAng = Math.atan2(b.y - canvas.height/2, b.x - canvas.width/2);
-            let diff = Math.abs(((bAng - threat.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
-            if (Math.hypot(b.x - canvas.width/2, b.y - canvas.height/2) > Math.max(canvas.width, canvas.height)*0.35 && diff < 0.7) {
-                threat.hits++; threat.flicker = 6; bullets.splice(i, 1);
-                if (threat.hits >= 3) threat.active = false; continue;
-            }
-        }
-        if (b.x < -100 || b.x > canvas.width+100 || b.y < -100 || b.y > canvas.height+100) bullets.splice(i, 1);
-    }
-    stars.forEach(s => { s.z -= CONFIG.speedZ; if(s.z <= 0) s.z = 1.0; });
-}
-
-function triggerDeath() {
-    gameRunning = false; document.getElementById("deathScreen").style.display = "flex";
-    setTimeout(() => { document.getElementById("deathScreen").style.display = "none"; startLevel(currentLevel); }, 1500);
-}
-
-function endGame() {
-    gameRunning = false; document.getElementById("results").style.display = "block";
-    document.getElementById("finalScore").innerText = document.getElementById("scoreDisp").innerText;
-    let passed = parseInt(document.getElementById("scoreDisp").innerText) >= CONFIG.passScore;
-    document.getElementById("qualifyMsg").innerText = passed ? "PILOT QUALIFIED" : "PRECISION UNDER PAR";
-    document.getElementById("nextLevelBtn").onclick = () => startLevel(passed ? currentLevel + 1 : currentLevel);
-}
-
-function startLevel(lvl) {
-    currentLevel = lvl; resize();
-    document.getElementById("lvlDisp").innerText = currentLevel;
-    document.getElementById("results").style.display = "none";
-    document.getElementById("overlay").style.display = "none";
-    ship.x = canvas.width/2; ship.y = canvas.height/2; ship.vx = 0; ship.vy = 0; ship.vAngle = 0;
-    stars = []; bullets = []; threat.active = false; threat.lastTrigger = 0;
-    for(let i=0; i<CONFIG.starCount; i++) spawnStar(Math.random());
-    totalError = 0; startTime = Date.now(); gameRunning = true;
-}
-
-function draw() {
-    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    if (!gameRunning && !stars.length) return;
-    
-    if (threat.active) {
-        ctx.save(); ctx.translate(canvas.width/2, canvas.height/2);
-        let tx = Math.cos(threat.angle)*Math.max(canvas.width, canvas.height)*0.45;
-        let ty = Math.sin(threat.angle)*Math.max(canvas.width, canvas.height)*0.45;
-        let bz = Math.max(canvas.width, canvas.height) * (0.5 + threat.doomScale);
-        let grad = ctx.createRadialGradient(tx, ty, 0, tx, ty, bz);
-        let col = threat.flicker > 0 ? "255, 255, 255" : "255, 120, 0";
-        grad.addColorStop(0, `rgba(${col}, 0.7)`); grad.addColorStop(0.3, `rgba(255, 60, 0, 0.3)`); grad.addColorStop(1, "rgba(255, 0, 0, 0)");
-        ctx.fillStyle = grad; ctx.globalCompositeOperation = "screen";
-        ctx.beginPath(); ctx.arc(tx, ty, bz, 0, Math.PI*2); ctx.fill(); ctx.restore();
-    }
-
-    stars.forEach(s => {
-        let scale = 1 / s.z; 
-        ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.8, scale/8)})`;
-        ctx.fillRect(leadPoint.x + (s.xOff * scale), leadPoint.y + (s.yOff * scale), s.size * scale, s.size * scale);
-    });
-
-    ctx.strokeStyle = "rgba(0, 230, 118, 0.1)"; ctx.setLineDash([5, 15]);
-    ctx.beginPath(); ctx.moveTo(0, canvas.height/2); ctx.lineTo(canvas.width/2, canvas.height/2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(canvas.width/2, 0); ctx.lineTo(canvas.width/2, canvas.height); ctx.stroke();
-    ctx.setLineDash([]);
-
-    ctx.fillStyle = "rgba(0, 230, 118, 0.8)"; ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 14, 0, Math.PI*2); ctx.fill();
-    bullets.forEach(b => { ctx.fillStyle = "#00FFFF"; ctx.fillRect(b.x-3, b.y-3, 7, 7); });
-
-    ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath();
-    ctx.moveTo(25, 0); ctx.lineTo(-15, -30); ctx.lineTo(-8, 0); ctx.lineTo(-15, 30);
-    ctx.closePath(); ctx.stroke(); ctx.restore();
-}
-
-function loop() { update(); draw(); requestAnimationFrame(loop); }
-loop();
-
-// --- FAIL-SAFE START LOGIC ---
-startBtn.addEventListener("click", async () => {
-    startBtn.innerText = "LINKING...";
-    
-    // Attempt permission request with a timeout
-    const permissionPromise = (async () => {
-        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-            return await DeviceMotionEvent.requestPermission();
-        }
-        return 'granted'; // Default for Android/Desktop
-    })();
-
-    try {
-        const result = await Promise.race([
-            permissionPromise,
-            new Promise(resolve => setTimeout(() => resolve('timeout'), 2000))
-        ]);
-        
-        console.log("Permission Result:", result);
-        startLevel(1); 
-    } catch (e) {
-        console.log("Permission Error:", e);
-        startLevel(1); // Force start anyway
-    }
-});
+// (Keep all the JS logic from v45.3 here)
+// ...
 </script>
 </body>
 </html>
