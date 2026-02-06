@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="STARSTREAM-192.png">
-<title>STAR STREAM v46</title>
+<title>STAR STREAM v46.1</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; position: fixed; width: 100%; height: 100%; }
@@ -15,16 +15,20 @@
     #ui { position: absolute; top: calc(env(safe-area-inset-top) + 10px); left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 14px; }
     #overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 100; background: rgba(0,0,0,0.98); padding: 30px; border: 2px solid #00E676; width: 90%; max-width: 400px; }
     #startBtn { padding: 20px; font-size: 18px; background: #00E676; color: #000; border: none; cursor: pointer; font-weight: bold; width: 100%; border-radius: 4px; }
+    #deathScreen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; z-index: 200; align-items: center; justify-content: center; color: #fff; font-size: 32px; font-weight: bold; text-align: center; background: rgba(255,50,0,0.3); }
 </style>
 </head>
 <body>
+
 <div id="ui">STAR STREAM | LVL: <span id="lvlDisp">1</span> | SCORE: <span id="scoreDisp">200</span></div>
 <canvas id="gameCanvas"></canvas>
+<div id="deathScreen">HULL BREACHED<br>STABILIZING...</div>
+
 <div id="overlay">
-    <img src="STARSTREAM-192.png" style="width: 80px; border-radius: 15px; margin-bottom: 15px;">
-    <h1>SYSTEM v46.0</h1>
-    <p style="font-size: 11px; margin: 20px 0; color: #fff;">SENSORS READY. ENGAGE NEURAL LINK.</p>
-    <button id="startBtn">ENGAGE</button>
+    <img src="STARSTREAM-192.png" style="width: 80px; border-radius: 15px; margin-bottom: 15px; border: 1px solid #00E676;">
+    <h1>SYSTEM RESTORED</h1>
+    <p style="font-size: 11px; margin: 20px 0; color: #fff; line-height: 1.4;">• LEFT: ROTATE (TOP CCW / BTM CW)<br>• RIGHT: FIRE CANNON<br>• TILT: VECTOR DRIFT</p>
+    <button id="startBtn">ENGAGE LINK</button>
 </div>
 
 <script>
@@ -34,63 +38,144 @@ const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 
-let gameRunning = false, stars = [], ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0 };
-let leadPoint = { x: 0, y: 0 }, tiltX = 0, tiltY = 0, activeRot = 0, startTime = 0;
+let gameRunning = false, currentLevel = 1, stars = [], bullets = [], frameCount = 0;
+let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0 };
+let threat = { active: false, angle: 0, hits: 0, startTime: 0, flicker: 0, lastTrigger: 0, doomScale: 0, dying: false };
+let leadPoint = { x: 0, y: 0 }, tiltX = 0, tiltY = 0, activeRot = 0, startTime = 0, totalError = 0;
 
 function resize() {
     canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    ship.x = canvas.width/2; ship.y = canvas.height/2;
+    if(!gameRunning) { ship.x = canvas.width/2; ship.y = canvas.height/2; }
 }
 window.addEventListener("resize", resize); resize();
 
-// Fail-safe: Start the loop but keep gameRunning false until click
-function loop() {
-    if (gameRunning) {
-        // Star movement
-        stars.forEach(s => { s.z -= 0.02; if(s.z <= 0) s.z = 1; });
-        // Physics
-        if (activeRot !== 0) ship.vAngle += 0.007 * activeRot;
-        ship.angle += ship.vAngle; ship.vAngle *= 0.8;
-        ship.vx += (tiltX * 0.4); ship.vy += (tiltY * 0.4);
-        ship.x += ship.vx; ship.y += ship.vy; ship.vx *= 0.88; ship.vy *= 0.88;
-        ship.x = Math.max(0, Math.min(canvas.width, ship.x)); ship.y = Math.max(0, Math.min(canvas.height, ship.y));
-    }
-    // Draw
-    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    stars.forEach(s => {
-        let scale = 1 / s.z;
-        ctx.fillStyle = `rgba(255, 255, 255, ${scale/8})`;
-        ctx.fillRect(leadPoint.x + (s.xOff * scale), leadPoint.y + (s.yOff * scale), 2 * scale, 2 * scale);
-    });
-    if (gameRunning) {
-        ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
-        ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath();
-        ctx.moveTo(20, 0); ctx.lineTo(-10, -15); ctx.lineTo(-10, 15); ctx.closePath(); ctx.stroke(); ctx.restore();
-    }
-    requestAnimationFrame(loop);
-}
-loop();
+function spawnStar(z) { return { xOff: (Math.random()-0.5)*1200, yOff: (Math.random()-0.5)*1200, z: z || 1.0, size: Math.random()*2+1 }; }
+
+function fire() { if(gameRunning) bullets.push({ x: ship.x, y: ship.y, vx: Math.cos(ship.angle)*25, vy: Math.sin(ship.angle)*25 }); }
 
 window.addEventListener("touchstart", (e) => {
     if (!gameRunning) return;
-    let t = e.touches[0];
-    if (t.clientX < canvas.width/2) activeRot = (t.clientY < canvas.height/2) ? -1 : 1;
+    for(let t of e.touches) {
+        if (t.clientX < canvas.width/2) {
+            activeRot = (t.clientY < canvas.height/2) ? -1 : 1;
+        } else { fire(); }
+    }
     e.preventDefault();
 }, {passive: false});
+
 window.addEventListener("touchend", () => { activeRot = 0; });
+
 window.addEventListener("devicemotion", (e) => {
     let acc = e.accelerationIncludingGravity;
-    if (acc) { tiltX = acc.y; tiltY = acc.x - 6; }
+    if (acc && gameRunning) { tiltX = acc.y; tiltY = acc.x - 6; }
 });
+
+function update() {
+    if (!gameRunning) return;
+    let now = Date.now(), elapsed = now - startTime;
+    
+    // Threat Logic (The Orange "Doom Sun")
+    if (!threat.active && elapsed > 9000 && (elapsed - threat.lastTrigger > 10000)) {
+        threat.active = true; threat.dying = false; threat.doomScale = 0;
+        threat.angle = Math.random() * Math.PI * 2; threat.hits = 0; threat.startTime = now;
+    }
+    if (threat.active) {
+        if (!threat.dying && now - threat.startTime > 5000) threat.dying = true;
+        if (threat.dying) { threat.doomScale += 0.02; if (threat.doomScale > 2) die(); }
+        threat.flicker = Math.max(0, threat.flicker - 1);
+    }
+
+    // Movement & Star Stream
+    frameCount++;
+    let t = frameCount * 0.012;
+    leadPoint.x += ((canvas.width/2 + Math.sin(t*0.8)*0.3*canvas.width) - leadPoint.x) * 0.07;
+    leadPoint.y += ((canvas.height/2 + Math.cos(t*0.7)*0.3*canvas.height) - leadPoint.y) * 0.07;
+
+    stars.forEach(s => { s.z -= 0.02; if(s.z <= 0) s.z = 1; });
+
+    // Scoring
+    let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
+    if (dist > 20) totalError += (dist - 20);
+    document.getElementById("scoreDisp").innerText = Math.floor(Math.max(0, 200 - (totalError/900)));
+
+    // Physics
+    ship.vAngle += 0.007 * activeRot;
+    ship.angle += ship.vAngle; ship.vAngle *= 0.8;
+    ship.vx += (tiltX * 0.4); ship.vy += (tiltY * 0.4);
+    ship.x += ship.vx; ship.y += ship.vy; ship.vx *= 0.88; ship.vy *= 0.88;
+    ship.x = Math.max(0, Math.min(canvas.width, ship.x)); ship.y = Math.max(0, Math.min(canvas.height, ship.y));
+
+    // Bullets & Collision
+    for(let i=bullets.length-1; i>=0; i--) {
+        let b = bullets[i]; b.x += b.vx; b.y += b.vy;
+        if(threat.active && !threat.dying) {
+            let bAng = Math.atan2(b.y - canvas.height/2, b.x - canvas.width/2);
+            let diff = Math.abs(((bAng - threat.angle + Math.PI*3)%(Math.PI*2))-Math.PI);
+            if(Math.hypot(b.x-canvas.width/2, b.y-canvas.height/2) > canvas.width*0.4 && diff < 0.6) {
+                threat.hits++; threat.flicker = 5; bullets.splice(i,1);
+                if(threat.hits >= 3) { threat.active = false; threat.lastTrigger = elapsed; }
+                continue;
+            }
+        }
+        if(b.x<0 || b.x>canvas.width || b.y<0 || b.y>canvas.height) bullets.splice(i,1);
+    }
+}
+
+function die() {
+    gameRunning = false; document.getElementById("deathScreen").style.display = "flex";
+    setTimeout(() => { document.getElementById("deathScreen").style.display = "none"; resetGame(); }, 1500);
+}
+
+function resetGame() {
+    bullets = []; totalError = 0; startTime = Date.now(); threat.active = false; threat.lastTrigger = 0;
+    ship.x = canvas.width/2; ship.y = canvas.height/2; ship.vx = 0; ship.vy = 0;
+    gameRunning = true;
+}
+
+function draw() {
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw Threat
+    if (threat.active) {
+        ctx.save(); ctx.translate(canvas.width/2, canvas.height/2);
+        let tx = Math.cos(threat.angle)*Math.max(canvas.width, canvas.height)*0.45;
+        let ty = Math.sin(threat.angle)*Math.max(canvas.width, canvas.height)*0.45;
+        let bz = Math.max(canvas.width, canvas.height) * (0.5 + threat.doomScale);
+        let grad = ctx.createRadialGradient(tx, ty, 0, tx, ty, bz);
+        let col = threat.flicker > 0 ? "255, 255, 255" : "255, 120, 0";
+        grad.addColorStop(0, `rgba(${col}, 0.8)`); grad.addColorStop(0.4, `rgba(255, 50, 0, 0.2)`); grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grad; ctx.globalCompositeOperation = "screen";
+        ctx.beginPath(); ctx.arc(tx, ty, bz, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    }
+
+    // Draw Stars
+    stars.forEach(s => {
+        let scale = 1 / s.z;
+        ctx.fillStyle = `rgba(255, 255, 255, ${scale/8})`;
+        ctx.fillRect(leadPoint.x + (s.xOff * scale), leadPoint.y + (s.yOff * scale), s.size * scale, s.size * scale);
+    });
+
+    // Draw UI Elements
+    ctx.fillStyle = "rgba(0, 230, 118, 0.8)"; ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 12, 0, Math.PI*2); ctx.fill();
+    bullets.forEach(b => { ctx.fillStyle = "#00FFFF"; ctx.fillRect(b.x-2, b.y-2, 5, 5); });
+
+    // Draw Ship
+    if (gameRunning) {
+        ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath();
+        ctx.moveTo(25, 0); ctx.lineTo(-15, -25); ctx.lineTo(-8, 0); ctx.lineTo(-15, 25); ctx.closePath(); ctx.stroke(); ctx.restore();
+    }
+    requestAnimationFrame(() => { update(); draw(); });
+}
 
 startBtn.addEventListener("click", async () => {
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         await DeviceMotionEvent.requestPermission().catch(() => {});
     }
     document.getElementById("overlay").style.display = "none";
-    leadPoint.x = canvas.width/2; leadPoint.y = canvas.height/2;
-    for(let i=0; i<300; i++) stars.push({xOff: (Math.random()-0.5)*1000, yOff: (Math.random()-0.5)*1000, z: Math.random()});
-    gameRunning = true;
+    stars = []; for(let i=0; i<400; i++) stars.push(spawnStar(Math.random()));
+    resetGame();
+    draw();
 });
 </script>
 </body>
