@@ -1,0 +1,23 @@
+{
+  "short_name": "Star Stream",
+  "name": "STAR STREAM: Vector Drift",
+  "icons": [
+    {
+      "src": "STARSTREAM-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "STARSTREAM0512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "./index.html",
+  "background_color": "#000000",
+  "display": "standalone",
+  "scope": "./",
+  "theme_color": "#00E676",
+  "description": "Deep space navigation and stress test."
+}
