@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Space Stream v35.0</title>
+<title>Space Stream v36.0</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -18,8 +18,8 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="ui">STREAM v35.0 | DEPTH: <span id="depth">0</span></div>
-<button id="startBtn">INITIALIZE STREAM</button>
+<div id="ui">STREAM v36.0 | DEPTH: <span id="depth">0</span></div>
+<button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -27,36 +27,50 @@ const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 
 let gameRunning = false;
+let touchL = false, touchR = false;
 let tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0;
 let frameCount = 0;
 
-// The "Lead Point" that the pilot follows
-let leadPoint = { x: 0, y: 0, targetX: 0, targetY: 0 };
+// The "Horizon Origin" point that meanders
+let leadPoint = { x: 0, y: 0 };
 
 const CONFIG = {
-    driftSens: 0.45,
-    friction: 0.82,
-    starCount: 250,
-    speed: 0.05,
-    pathWidth: 200 // The "Safe Band" radius
+    rotTorque: 0.0022,    // Restored from v33.0
+    driftSens: 0.35,      // Restored from v33.0
+    driftFriction: 0.85,  
+    rotFriction: 0.92,    
+    starCount: 400,       // INCREASED density
+    speed: 0.02,          // SLOWER velocity for better tracking
+    pathWidth: 180        // The width of the corridor
 };
 
-let ship = { x: 0, y: 0, vx: 0, vy: 0, w: 50 };
+// Restored Ship Design from v33.0
+let ship = { 
+    x: 0, y: 0, vx: 0, vy: 0, 
+    angle: -Math.PI/2, vAngle: 0,
+    w: 80, h: 8 
+};
+
 let stars = [];
 let lastAcc = null;
 
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    ship.x = canvas.width / 2;
-    ship.y = canvas.height / 2;
-    leadPoint.x = canvas.width / 2;
-    leadPoint.y = canvas.height / 2;
+    ship.x = canvas.width / 2; ship.y = canvas.height / 2;
+    leadPoint.x = canvas.width / 2; leadPoint.y = canvas.height / 2;
 }
 
 window.addEventListener("resize", resize);
 resize();
+
+// Restored Input Management
+window.addEventListener("touchstart", (e) => {
+    if (!gameRunning) return;
+    for(let t of e.touches) (t.clientX < canvas.width/2) ? touchL = true : touchR = true;
+});
+window.addEventListener("touchend", () => { touchL = false; touchR = false; });
 
 window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
@@ -73,14 +87,14 @@ function initStars() {
 }
 
 function spawnStar(zOverride) {
-    // Stars are born at the current Lead Point location
     stars.push({
         originX: leadPoint.x,
         originY: leadPoint.y,
+        // Particles spawn in a circular band around the lead point
         xOffset: (Math.random() - 0.5) * CONFIG.pathWidth * 2,
         yOffset: (Math.random() - 0.5) * CONFIG.pathWidth * 2,
         z: zOverride || 1.0,
-        size: Math.random() * 2 + 1
+        size: Math.random() * 1.5 + 0.5
     });
 }
 
@@ -88,40 +102,31 @@ function update() {
     if (!gameRunning) return;
     frameCount++;
 
-    // Meandering Logic: Lead Point drifts smoothly
-    leadPoint.x = (canvas.width / 2) + Math.sin(frameCount * 0.01) * (canvas.width * 0.35);
-    leadPoint.y = (canvas.height / 2) + Math.cos(frameCount * 0.015) * (canvas.height * 0.25);
+    // Meandering Horizon point
+    leadPoint.x = (canvas.width / 2) + Math.sin(frameCount * 0.008) * (canvas.width * 0.3);
+    leadPoint.y = (canvas.height / 2) + Math.cos(frameCount * 0.012) * (canvas.height * 0.2);
 
-    // Ship Physics
+    // Restored Physics Logic
+    if (touchL) ship.vAngle -= CONFIG.rotTorque;
+    if (touchR) ship.vAngle += CONFIG.rotTorque;
+    ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
+
     ship.vx += tiltX * CONFIG.driftSens;
     ship.vy += tiltY * CONFIG.driftSens;
     ship.x += ship.vx; ship.y += ship.vy;
-    ship.vx *= CONFIG.friction; ship.vy *= CONFIG.friction;
+    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
     
-    // Contain ship on screen
     ship.x = Math.max(0, Math.min(canvas.width, ship.x));
     ship.y = Math.max(0, Math.min(canvas.height, ship.y));
 
-    // Update Particles
     for (let i = stars.length - 1; i >= 0; i--) {
         let s = stars[i];
         s.z -= CONFIG.speed;
-
         if (s.z <= 0) {
             stars.splice(i, 1);
             spawnStar(1.0);
         }
     }
-
-    // Check if ship is within the "Band" (Lead Point projected at Z=0)
-    let distToCenter = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
-    if (distToCenter > CONFIG.pathWidth * 1.5) {
-        // Warning: drifting out of the stream
-        document.body.style.backgroundColor = `rgba(255, 0, 0, ${Math.min(0.3, (distToCenter - CONFIG.pathWidth)/500)})`;
-    } else {
-        document.body.style.backgroundColor = "#000";
-    }
-
     document.getElementById("depth").innerText = frameCount;
 }
 
@@ -130,30 +135,45 @@ function draw() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
 
-    // Draw Star Band
+    const mx = canvas.width / 2, my = canvas.height / 2;
+
+    // Draw the "Horizon Origin" core so the pilot can see the target
+    ctx.fillStyle = "rgba(0, 230, 118, 0.4)";
+    ctx.beginPath();
+    ctx.arc(leadPoint.x, leadPoint.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Draw the Star Stream
     stars.forEach(s => {
-        // Perspective calculation
         let scale = 1 / s.z;
         let pX = s.originX + (s.xOffset * scale);
         let pY = s.originY + (s.yOffset * scale);
         
-        let alpha = Math.min(1, scale / 10);
-        ctx.fillStyle = `rgba(0, 230, 118, ${alpha})`;
+        // Visibility fades as it gets closer/further
+        let alpha = Math.min(0.8, scale / 8);
+        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
         
-        let visualSize = s.size * scale * 0.5;
-        ctx.beginPath();
-        ctx.arc(pX, pY, visualSize, 0, Math.PI * 2);
-        ctx.fill();
+        let visualSize = s.size * scale;
+        ctx.fillRect(pX, pY, visualSize, visualSize);
     });
 
-    // Draw Ship
+    // Restored Ship Visualization
     ctx.save();
-    ctx.translate(ship.x, ship.y);
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 3;
+    ctx.translate(ship.x, ship.y); 
+    ctx.rotate(ship.angle);
+    ctx.strokeStyle = "#fff"; 
+    ctx.lineWidth = 3;  
+    ctx.shadowBlur = 15;  
+    ctx.shadowColor = "#00E676";
     ctx.beginPath();
-    ctx.moveTo(15, 0); ctx.lineTo(-10, -15); ctx.lineTo(-10, 15);
-    ctx.closePath(); ctx.stroke();
+    ctx.moveTo(25, 0);  
+    ctx.lineTo(-15, -ship.w/2); 
+    ctx.lineTo(-8, 0); 
+    ctx.lineTo(-15, ship.w/2);
+    ctx.closePath(); 
+    ctx.stroke();
+    ctx.fillStyle = "#00E676"; 
+    ctx.fillRect(-18, -12, 4, 24);  
     ctx.restore();
 }
 
