@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v44.7</title>
+<title>STAR STREAM v44.8</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -19,7 +19,6 @@
         position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
         text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110;
     }
-    .warning-orange { color: #FFA500 !important; }
     #deathScreen {
         position: absolute; top: 0; left: 0; width: 100%; height: 100%;
         display: none; z-index: 200; align-items: center; justify-content: center;
@@ -37,12 +36,12 @@
 <div id="deathScreen">HULL BREACHED<br>STABILIZING...</div>
 
 <div id="overlay">
-    <h1 style="margin-bottom: 10px; font-size: 16px;">STRESS REDUCTION v44.7</h1>
+    <h1 style="margin-bottom: 10px; font-size: 16px;">VIRTUAL STRESS TEST v44.8</h1>
     <div class="briefing">
-        - <b>SCORE LOCK:</b> Score is frozen during Orange Bloom events.<br>
-        - <b>DOOM DELAY:</b> Singularity expansion speed halved (2s duration).<br>
-        - <b>FEEDBACK:</b> Threat flashes white on successful hit.<br>
-        - <b>PASS SCORE:</b> 150.
+        - <b>STRICT ISOLATION:</b> Rotation cannot affect drift velocity.<br>
+        - <b>SPEED CAP:</b> Ship top speed is electronically limited.<br>
+        - <b>SCORE LOCK:</b> Score frozen during combat phases.<br>
+        - <b>DOOM:</b> Slow-flow singularity (2s).
     </div>
     <button id="startBtn">INITIATE TRIAL</button>
 </div>
@@ -70,9 +69,13 @@ let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0 };
 let leadPoint = { x: 0, y: 0 };
 
 const CONFIG = {
-    rotTorque: 0.0045, driftSens: 0.35, driftFriction: 0.88, rotFriction: 0.82,
+    rotTorque: 0.0055, // Snappy rotation
+    driftSens: 0.35, 
+    driftFriction: 0.85, 
+    rotFriction: 0.80, 
+    maxVelocity: 15, // Hard cap to prevent "speeding up"
     starCount: 500, speedZ: 0.02, trialDuration: 30000, 
-    perfectZone: 15, bulletSpeed: 25, passScore: 150
+    perfectZone: 18, bulletSpeed: 25, passScore: 150
 };
 
 function resize() {
@@ -151,7 +154,7 @@ function update() {
     }
 
     if (threat.dying) {
-        threat.doomScale += 0.02; // Halved from 0.04 to slow down the "feeling of doom"
+        threat.doomScale += 0.02; 
         if (threat.doomScale > 2.0) { die(); return; }
     }
 
@@ -168,32 +171,42 @@ function update() {
     leadPoint.x += (dX - leadPoint.x) * (0.07 * evalSlowdown * targetSpeedScale);
     leadPoint.y += (dY - leadPoint.y) * (0.07 * evalSlowdown * targetSpeedScale);
 
-    // --- SCORE FREEZE LOGIC ---
-    // Error only accumulates if no threat is active. 
     if (!threat.active && elapsed > 3000) {
         let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
         if (dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
     }
     
     let score = Math.floor(Math.max(0, 200 - (totalError / 900)));
-    let sDisp = document.getElementById("scoreDisp");
-    sDisp.innerText = score;
-    sDisp.className = (score < CONFIG.passScore) ? "warning-orange" : "";
+    document.getElementById("scoreDisp").innerText = score;
 
-    // Physics
+    // --- ISOLATED ROTATION ---
     if (touchL) ship.vAngle += CONFIG.rotTorque * rotDir;
-    ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
-    ship.vx += tiltX * CONFIG.driftSens; ship.vy += tiltY * CONFIG.driftSens;
-    ship.x += ship.vx; ship.y += ship.vy;
-    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
+    ship.angle += ship.vAngle; 
+    ship.vAngle *= CONFIG.rotFriction;
+
+    // --- ISOLATED DRIFT ---
+    // Zero reference to 'ship.angle' here ensures no velocity leakage.
+    ship.vx += (tiltX * CONFIG.driftSens); 
+    ship.vy += (tiltY * CONFIG.driftSens);
+    
+    // Velocity Clamp
+    let speed = Math.hypot(ship.vx, ship.vy);
+    if (speed > CONFIG.maxVelocity) {
+        ship.vx = (ship.vx / speed) * CONFIG.maxVelocity;
+        ship.vy = (ship.vy / speed) * CONFIG.maxVelocity;
+    }
+
+    ship.x += ship.vx; 
+    ship.y += ship.vy;
+    ship.vx *= CONFIG.driftFriction; 
+    ship.vy *= CONFIG.driftFriction;
 
     ship.x = Math.max(0, Math.min(canvas.width, ship.x));
     ship.y = Math.max(0, Math.min(canvas.height, ship.y));
 
-    // Bullet Logic
+    // Bullets
     for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i]; b.x += b.vx; b.y += b.vy;
-        
         if (threat.active && !threat.dying) {
             let bAng = Math.atan2(b.y - canvas.height/2, b.x - canvas.width/2);
             let diff = Math.abs(((bAng - threat.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
@@ -237,7 +250,7 @@ function startLevel(lvl) {
     document.getElementById("lvlDisp").innerText = currentLevel;
     document.getElementById("results").style.display = "none";
     document.getElementById("overlay").style.display = "none";
-    ship.x = canvas.width / 2; ship.y = canvas.height / 2;
+    ship.x = canvas.width/2; ship.y = canvas.height/2;
     ship.vx = 0; ship.vy = 0; ship.vAngle = 0;
     stars = []; bullets = []; threat.active = false; threat.dying = false; threat.lastTrigger = 0;
     for(let i=0; i<CONFIG.starCount; i++) spawnStar(Math.random());
@@ -254,15 +267,11 @@ function draw() {
         let targetX = Math.cos(threat.angle) * Math.max(canvas.width, canvas.height) * 0.45;
         let targetY = Math.sin(threat.angle) * Math.max(canvas.width, canvas.height) * 0.45;
         let bloomSize = Math.max(canvas.width, canvas.height) * (0.5 + threat.doomScale);
-        
         let grad = ctx.createRadialGradient(targetX, targetY, 0, targetX, targetY, bloomSize);
         let baseColor = threat.flicker > 0 ? "255, 255, 255" : "255, 120, 0"; 
-        let alpha = threat.dying ? 0.8 : 0.6;
-        
-        grad.addColorStop(0, `rgba(${baseColor}, ${alpha})`);
-        grad.addColorStop(0.3, `rgba(255, 60, 0, ${alpha * 0.5})`);
+        grad.addColorStop(0, `rgba(${baseColor}, 0.7)`);
+        grad.addColorStop(0.3, `rgba(255, 60, 0, 0.3)`);
         grad.addColorStop(1, "rgba(255, 0, 0, 0)");
-        
         ctx.fillStyle = grad;
         ctx.globalCompositeOperation = "screen";
         ctx.beginPath(); ctx.arc(targetX, targetY, bloomSize, 0, Math.PI * 2); ctx.fill();
@@ -275,11 +284,9 @@ function draw() {
         ctx.fillRect(s.originX + (s.xOff * scale), s.originY + (s.yOff * scale), s.size * scale, s.size * scale);
     });
 
-    // Score visibility aid (frozen state)
     if (threat.active && !threat.dying) {
         ctx.strokeStyle = "rgba(255, 165, 0, 0.5)";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(15, 15, 250, 50); // Box around UI when score is frozen
+        ctx.lineWidth = 2; ctx.strokeRect(15, 15, 250, 50);
     }
 
     ctx.fillStyle = "rgba(0, 230, 118, 0.8)";
@@ -290,10 +297,14 @@ function draw() {
         ctx.fillRect(b.x-3, b.y-3, 7, 7);
     });
 
-    ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
+    // SHIP DRAWING (Rotation applied only here)
+    ctx.save(); 
+    ctx.translate(ship.x, ship.y); 
+    ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath();
     ctx.moveTo(25, 0); ctx.lineTo(-15, -30); ctx.lineTo(-8, 0); ctx.lineTo(-15, 30);
-    ctx.closePath(); ctx.stroke(); ctx.restore();
+    ctx.closePath(); ctx.stroke(); 
+    ctx.restore();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
