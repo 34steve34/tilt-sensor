@@ -3,18 +3,26 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v44.8</title>
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>STAR STREAM v44.9</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
     #gameCanvas { display: block; }
-    #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 18px; }
+    #ui { position: absolute; top: 40px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 18px; }
+    
+    /* Control Zone Visualizers (Optional/Hidden) */
+    .zone-label { position: absolute; color: rgba(0, 230, 118, 0.2); font-size: 10px; pointer-events: none; text-transform: uppercase; }
+    
     #overlay {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
         text-align: center; z-index: 100; background: rgba(0,0,0,0.9); padding: 25px; border: 2px solid #00E676;
     }
     .briefing { color: #fff; font-size: 10px; margin-bottom: 20px; line-height: 1.4; text-align: left; border-left: 3px solid #00E676; padding-left: 12px; }
     #startBtn { padding: 15px 30px; font-size: 20px; background: #00E676; color: #000; border: none; cursor: pointer; font-weight: bold; }
+    
     #results {
         position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
         text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110;
@@ -27,23 +35,29 @@
 </style>
 </head>
 <body>
-<canvas id="gameCanvas"></canvas>
+
 <div id="ui">
     STAR STREAM | LVL: <span id="lvlDisp">1</span><br>
     TIME: <span id="timer">30.00</span>s | SCORE: <span id="scoreDisp">200</span>
 </div>
 
+<div class="zone-label" style="top: 25%; left: 10px;">ROT CCW ↺</div>
+<div class="zone-label" style="top: 75%; left: 10px;">ROT CW ↻</div>
+<div class="zone-label" style="top: 50%; right: 10px;">FIRE ⚡</div>
+
+<canvas id="gameCanvas"></canvas>
+
 <div id="deathScreen">HULL BREACHED<br>STABILIZING...</div>
 
 <div id="overlay">
-    <h1 style="margin-bottom: 10px; font-size: 16px;">VIRTUAL STRESS TEST v44.8</h1>
+    <h1 style="margin-bottom: 10px; font-size: 16px;">NAVIGATION PATCH v44.9</h1>
     <div class="briefing">
-        - <b>STRICT ISOLATION:</b> Rotation cannot affect drift velocity.<br>
-        - <b>SPEED CAP:</b> Ship top speed is electronically limited.<br>
-        - <b>SCORE LOCK:</b> Score frozen during combat phases.<br>
-        - <b>DOOM:</b> Slow-flow singularity (2s).
+        - <b>CONTROLS:</b> Left-Top: ↺ | Left-Bottom: ↻ | Right: FIRE.<br>
+        - <b>ISOLATION:</b> Vector-locked drift (Pure Tilt).<br>
+        - <b>FULLSCREEN:</b> Add to Home Screen for standalone experience.<br>
+        - <b>SCORE:</b> Frozen during combat.
     </div>
-    <button id="startBtn">INITIATE TRIAL</button>
+    <button id="startBtn">ENGAGE</button>
 </div>
 
 <div id="results">
@@ -60,7 +74,7 @@ const startBtn = document.getElementById("startBtn");
 const nextLevelBtn = document.getElementById("nextLevelBtn");
 
 let gameRunning = false, currentLevel = 1, frameCount = 0;
-let evalSlowdown = 1.0, touchL = false, lastLTap = 0, rotDir = 1;
+let evalSlowdown = 1.0, activeRot = 0; // 0: none, -1: CCW, 1: CW
 let tiltX = 0, tiltY = 0, totalError = 0, startTime = 0;
 
 let bullets = [], stars = [];
@@ -69,11 +83,11 @@ let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0 };
 let leadPoint = { x: 0, y: 0 };
 
 const CONFIG = {
-    rotTorque: 0.0055, // Snappy rotation
+    rotTorque: 0.006, // Snappier for split controls
     driftSens: 0.35, 
     driftFriction: 0.85, 
-    rotFriction: 0.80, 
-    maxVelocity: 15, // Hard cap to prevent "speeding up"
+    rotFriction: 0.78, 
+    maxVelocity: 14,
     starCount: 500, speedZ: 0.02, trialDuration: 30000, 
     perfectZone: 18, bulletSpeed: 25, passScore: 150
 };
@@ -84,27 +98,36 @@ function resize() {
 }
 window.addEventListener("resize", resize); resize();
 
+// --- NEW SPLIT-ZONE INPUT LOGIC ---
 window.addEventListener("touchstart", (e) => {
     if (!gameRunning) return;
-    for(let t of e.touches) {
-        if (t.clientX < canvas.width/2) {
-            touchL = true;
-            let now = Date.now();
-            if (now - lastLTap < 300) rotDir *= -1;
-            lastLTap = now;
-        } else { fireBullet(); }
-    }
+    updateTouches(e);
     e.preventDefault();
 }, {passive: false});
 
-window.addEventListener("touchend", (e) => { 
-    if(e.touches.length === 0) touchL = false; 
-    else {
-        let leftStillDown = false;
-        for(let t of e.touches) if(t.clientX < canvas.width/2) leftStillDown = true;
-        touchL = leftStillDown;
+window.addEventListener("touchmove", (e) => {
+    if (!gameRunning) return;
+    updateTouches(e);
+    e.preventDefault();
+}, {passive: false});
+
+window.addEventListener("touchend", (e) => { updateTouches(e); });
+
+function updateTouches(e) {
+    activeRot = 0;
+    let firing = false;
+
+    for(let t of e.touches) {
+        if (t.clientX < canvas.width/2) {
+            // LEFT SIDE: Split Top/Bottom
+            if (t.clientY < canvas.height/2) activeRot = -1; // CCW
+            else activeRot = 1; // CW
+        } else {
+            // RIGHT SIDE: Fire
+            if (e.type === "touchstart") fireBullet();
+        }
     }
-});
+}
 
 window.addEventListener("devicemotion", (e) => {
     const acc = e.accelerationIncludingGravity;
@@ -138,7 +161,6 @@ function update() {
     let now = Date.now();
     let elapsed = now - startTime;
     let remaining = Math.max(0, (CONFIG.trialDuration - elapsed) / 1000);
-    
     document.getElementById("timer").innerText = remaining.toFixed(2);
     
     if (!threat.active) {
@@ -162,49 +184,36 @@ function update() {
 
     let targetSpeedScale = (threat.active && !threat.dying) ? 0.5 : 1.0;
     frameCount += (1 * evalSlowdown * targetSpeedScale);
-    let sf = 1 + (currentLevel - 1) * 0.10;
-    let t = frameCount * 0.012 * sf;
+    let t = frameCount * 0.012 * (1 + (currentLevel-1)*0.1);
 
-    let dX = (canvas.width/2) + (Math.sin(t*0.8)*0.4)*canvas.width;
-    let dY = (canvas.height/2) + (Math.cos(t*0.7)*0.3)*canvas.height;
-    
-    leadPoint.x += (dX - leadPoint.x) * (0.07 * evalSlowdown * targetSpeedScale);
-    leadPoint.y += (dY - leadPoint.y) * (0.07 * evalSlowdown * targetSpeedScale);
+    leadPoint.x += ((canvas.width/2 + Math.sin(t*0.8)*0.4*canvas.width) - leadPoint.x) * 0.07;
+    leadPoint.y += ((canvas.height/2 + Math.cos(t*0.7)*0.3*canvas.height) - leadPoint.y) * 0.07;
 
     if (!threat.active && elapsed > 3000) {
         let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
         if (dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
     }
-    
-    let score = Math.floor(Math.max(0, 200 - (totalError / 900)));
-    document.getElementById("scoreDisp").innerText = score;
+    document.getElementById("scoreDisp").innerText = Math.floor(Math.max(0, 200 - (totalError / 900)));
 
-    // --- ISOLATED ROTATION ---
-    if (touchL) ship.vAngle += CONFIG.rotTorque * rotDir;
+    // --- PHYSICS ISOLATION ---
+    if (activeRot !== 0) ship.vAngle += CONFIG.rotTorque * activeRot;
     ship.angle += ship.vAngle; 
     ship.vAngle *= CONFIG.rotFriction;
 
-    // --- ISOLATED DRIFT ---
-    // Zero reference to 'ship.angle' here ensures no velocity leakage.
     ship.vx += (tiltX * CONFIG.driftSens); 
     ship.vy += (tiltY * CONFIG.driftSens);
-    
-    // Velocity Clamp
     let speed = Math.hypot(ship.vx, ship.vy);
     if (speed > CONFIG.maxVelocity) {
         ship.vx = (ship.vx / speed) * CONFIG.maxVelocity;
         ship.vy = (ship.vy / speed) * CONFIG.maxVelocity;
     }
-
-    ship.x += ship.vx; 
-    ship.y += ship.vy;
-    ship.vx *= CONFIG.driftFriction; 
-    ship.vy *= CONFIG.driftFriction;
+    ship.x += ship.vx; ship.y += ship.vy;
+    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
 
     ship.x = Math.max(0, Math.min(canvas.width, ship.x));
     ship.y = Math.max(0, Math.min(canvas.height, ship.y));
 
-    // Bullets
+    // Bullets & Threat Collision
     for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i]; b.x += b.vx; b.y += b.vy;
         if (threat.active && !threat.dying) {
@@ -212,8 +221,7 @@ function update() {
             let diff = Math.abs(((bAng - threat.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
             let dToCenter = Math.hypot(b.x - canvas.width/2, b.y - canvas.height/2);
             if (dToCenter > Math.max(canvas.width, canvas.height) * 0.35 && diff < 0.7) {
-                threat.hits++; threat.flicker = 6;
-                bullets.splice(i, 1);
+                threat.hits++; threat.flicker = 6; bullets.splice(i, 1);
                 if (threat.hits >= 3) threat.active = false;
                 continue;
             }
@@ -250,8 +258,7 @@ function startLevel(lvl) {
     document.getElementById("lvlDisp").innerText = currentLevel;
     document.getElementById("results").style.display = "none";
     document.getElementById("overlay").style.display = "none";
-    ship.x = canvas.width/2; ship.y = canvas.height/2;
-    ship.vx = 0; ship.vy = 0; ship.vAngle = 0;
+    ship.x = canvas.width/2; ship.y = canvas.height/2; ship.vx = 0; ship.vy = 0; ship.vAngle = 0;
     stars = []; bullets = []; threat.active = false; threat.dying = false; threat.lastTrigger = 0;
     for(let i=0; i<CONFIG.starCount; i++) spawnStar(Math.random());
     totalError = 0; startTime = Date.now(); gameRunning = true;
@@ -297,14 +304,10 @@ function draw() {
         ctx.fillRect(b.x-3, b.y-3, 7, 7);
     });
 
-    // SHIP DRAWING (Rotation applied only here)
-    ctx.save(); 
-    ctx.translate(ship.x, ship.y); 
-    ctx.rotate(ship.angle);
+    ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath();
     ctx.moveTo(25, 0); ctx.lineTo(-15, -30); ctx.lineTo(-8, 0); ctx.lineTo(-15, 30);
-    ctx.closePath(); ctx.stroke(); 
-    ctx.restore();
+    ctx.closePath(); ctx.stroke(); ctx.restore();
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
