@@ -5,78 +5,93 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="STARSTREAM-192.png">
-<title>STAR STREAM</title>
+<title>STAR STREAM v46</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { 
-        background: #000; 
-        overflow: hidden; 
-        touch-action: none; 
-        font-family: 'Courier New', monospace; 
-        color: #00E676; 
-        /* Prevents pulls/bounces on mobile */
-        position: fixed;
-        width: 100%;
-        height: 100%;
-    }
+    body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; position: fixed; width: 100%; height: 100%; }
     #gameCanvas { display: block; width: 100vw; height: 100vh; }
-    
-    #ui { 
-        position: absolute; 
-        /* env(safe-area-inset-top) pushes UI just below the clock/notch */
-        top: calc(env(safe-area-inset-top) + 10px); 
-        left: 20px; 
-        pointer-events: none; 
-        text-shadow: 2px 2px #000; 
-        z-index: 10; 
-        font-size: 14px; 
-    }
-
-    #overlay {
-        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        text-align: center; z-index: 100; background: rgba(0,0,0,0.98); padding: 30px; border: 2px solid #00E676; width: 90%; max-width: 400px;
-    }
-    #startBtn { padding: 20px; font-size: 18px; background: #00E676; color: #000; border: none; cursor: pointer; font-weight: bold; width: 100%; border-radius: 4px; text-transform: uppercase; }
-    
-    #results {
-        position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
-        text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110;
-    }
-    #deathScreen {
-        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-        display: none; z-index: 200; align-items: center; justify-content: center;
-        color: #fff; font-size: 32px; font-weight: bold; text-align: center; background: rgba(255,50,0,0.2);
-    }
+    #ui { position: absolute; top: calc(env(safe-area-inset-top) + 10px); left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 14px; }
+    #overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 100; background: rgba(0,0,0,0.98); padding: 30px; border: 2px solid #00E676; width: 90%; max-width: 400px; }
+    #startBtn { padding: 20px; font-size: 18px; background: #00E676; color: #000; border: none; cursor: pointer; font-weight: bold; width: 100%; border-radius: 4px; }
 </style>
 </head>
 <body>
-
-<div id="ui">
-    STAR STREAM | LVL: <span id="lvlDisp">1</span><br>
-    TIME: <span id="timer">30.00</span>s | SCORE: <span id="scoreDisp">200</span>
-</div>
-
+<div id="ui">STAR STREAM | LVL: <span id="lvlDisp">1</span> | SCORE: <span id="scoreDisp">200</span></div>
 <canvas id="gameCanvas"></canvas>
-<div id="deathScreen">HULL BREACHED<br>STABILIZING...</div>
-
 <div id="overlay">
-    <img src="STARSTREAM-192.png" id="logoImg" style="width: 80px; border-radius: 15px; margin-bottom: 15px; border: 1px solid #00E676;">
-    <h1 style="margin-bottom: 10px; font-size: 16px;">V-DRIFT NAV-COM v45.4</h1>
-    <div style="color: #fff; font-size: 11px; margin-bottom: 20px; text-align: left; line-height: 1.5; border-left: 3px solid #00E676; padding-left: 10px;">
-        • <b>TOP LEFT:</b> Rotate CCW ↺<br>
-        • <b>BTM LEFT:</b> Rotate CW ↻<br>
-        • <b>RIGHT SIDE:</b> Fire Pulse ⚡<br>
-        • <b>TILT:</b> Stabilize Drift
-    </div>
-    <button id="startBtn">INITIALIZE LINK</button>
+    <img src="STARSTREAM-192.png" style="width: 80px; border-radius: 15px; margin-bottom: 15px;">
+    <h1>SYSTEM v46.0</h1>
+    <p style="font-size: 11px; margin: 20px 0; color: #fff;">SENSORS READY. ENGAGE NEURAL LINK.</p>
+    <button id="startBtn">ENGAGE</button>
 </div>
 
 <script>
-// (Keep all the JS logic from v45.3 here)
-// ...
+if ('serviceWorker' in navigator) { navigator.serviceWorker.register('./sw.js'); }
+
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+const startBtn = document.getElementById("startBtn");
+
+let gameRunning = false, stars = [], ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0 };
+let leadPoint = { x: 0, y: 0 }, tiltX = 0, tiltY = 0, activeRot = 0, startTime = 0;
+
+function resize() {
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    ship.x = canvas.width/2; ship.y = canvas.height/2;
+}
+window.addEventListener("resize", resize); resize();
+
+// Fail-safe: Start the loop but keep gameRunning false until click
+function loop() {
+    if (gameRunning) {
+        // Star movement
+        stars.forEach(s => { s.z -= 0.02; if(s.z <= 0) s.z = 1; });
+        // Physics
+        if (activeRot !== 0) ship.vAngle += 0.007 * activeRot;
+        ship.angle += ship.vAngle; ship.vAngle *= 0.8;
+        ship.vx += (tiltX * 0.4); ship.vy += (tiltY * 0.4);
+        ship.x += ship.vx; ship.y += ship.vy; ship.vx *= 0.88; ship.vy *= 0.88;
+        ship.x = Math.max(0, Math.min(canvas.width, ship.x)); ship.y = Math.max(0, Math.min(canvas.height, ship.y));
+    }
+    // Draw
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    stars.forEach(s => {
+        let scale = 1 / s.z;
+        ctx.fillStyle = `rgba(255, 255, 255, ${scale/8})`;
+        ctx.fillRect(leadPoint.x + (s.xOff * scale), leadPoint.y + (s.yOff * scale), 2 * scale, 2 * scale);
+    });
+    if (gameRunning) {
+        ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath();
+        ctx.moveTo(20, 0); ctx.lineTo(-10, -15); ctx.lineTo(-10, 15); ctx.closePath(); ctx.stroke(); ctx.restore();
+    }
+    requestAnimationFrame(loop);
+}
+loop();
+
+window.addEventListener("touchstart", (e) => {
+    if (!gameRunning) return;
+    let t = e.touches[0];
+    if (t.clientX < canvas.width/2) activeRot = (t.clientY < canvas.height/2) ? -1 : 1;
+    e.preventDefault();
+}, {passive: false});
+window.addEventListener("touchend", () => { activeRot = 0; });
+window.addEventListener("devicemotion", (e) => {
+    let acc = e.accelerationIncludingGravity;
+    if (acc) { tiltX = acc.y; tiltY = acc.x - 6; }
+});
+
+startBtn.addEventListener("click", async () => {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        await DeviceMotionEvent.requestPermission().catch(() => {});
+    }
+    document.getElementById("overlay").style.display = "none";
+    leadPoint.x = canvas.width/2; leadPoint.y = canvas.height/2;
+    for(let i=0; i<300; i++) stars.push({xOff: (Math.random()-0.5)*1000, yOff: (Math.random()-0.5)*1000, z: Math.random()});
+    gameRunning = true;
+});
 </script>
 </body>
 </html>
