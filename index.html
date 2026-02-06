@@ -3,234 +3,111 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v43.0</title>
+<title>Movement Lab v1.0</title>
 <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
-    #gameCanvas { display: block; }
-    #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 20px; }
-    #startBtn {
-        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        padding: 25px 50px; font-size: 24px; background: #00E676; color: #000;
-        border: none; border-radius: 8px; cursor: pointer; z-index: 100; font-weight: bold;
-    }
-    #results {
-        position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
-        text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110; min-width: 320px;
-    }
-    .warning-orange { color: #FFA500 !important; }
-    .warning-red { color: #FF0000 !important; font-weight: bold; }
+    body { background: #111; color: #00E676; font-family: monospace; margin: 0; overflow: hidden; touch-action: none; }
+    canvas { display: block; }
+    #controls { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 15px; border: 1px solid #00E676; pointer-events: none; }
+    .label { font-size: 12px; color: #fff; margin-bottom: 5px; }
 </style>
 </head>
 <body>
-<canvas id="gameCanvas"></canvas>
-<div id="ui">
-    STAR STREAM v43.0 | LVL: <span id="lvlDisp">1</span><br>
-    TIME: <span id="timer">30.00</span>s<br>
-    SCORE: <span id="score">200</span>
+<div id="controls">
+    <div style="font-weight:bold; margin-bottom:10px;">MOVEMENT VISUALIZER</div>
+    <div class="label">Green Dot: Target</div>
+    <div class="label">White Line: Path History</div>
+    <div class="label">Blue Circle: Center Gravity</div>
 </div>
-
-<div id="results">
-    <h1>TRIAL COMPLETE</h1>
-    <h2 id="finalScore" style="font-size: 64px; margin: 10px 0; color: #fff;">0</h2>
-    <p id="qualifyMsg" style="margin-bottom: 20px;"></p>
-    <button id="nextLevelBtn" style="padding: 15px 30px; font-size: 18px; cursor:pointer; background:#00E676; border:none; font-weight:bold;">NEXT TRIAL</button>
-</div>
-
-<button id="startBtn">ENGAGE ENGINES</button>
+<canvas id="labCanvas"></canvas>
 
 <script>
-const canvas = document.getElementById("gameCanvas");
+const canvas = document.getElementById("labCanvas");
 const ctx = canvas.getContext("2d");
-const startBtn = document.getElementById("startBtn");
-const nextLevelBtn = document.getElementById("nextLevelBtn");
-const timerDisp = document.getElementById("timer");
 
-let gameRunning = false;
-let currentLevel = 1;
-let touchL = false, touchR = false;
-let tiltX = 0, tiltY = 0;
-let baseGX = 0, baseGY = 0;
-let totalError = 0; 
-let startTime = 0;
-let samplingTimer = 0;
-
-// Reverting to Original Pixel Scaling
-let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0, w: 80 };
-let leadPoint = { x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
-let targetHeading = 0;
-
-const CONFIG = {
-    rotTorque: 0.0022,    
-    driftSens: 0.35,      
-    driftFriction: 0.85,  
-    rotFriction: 0.92,    
-    starCount: 650,       
-    speedZ: 0.022,         
-    trialDuration: 30000,
-    sampleRate: 50, 
-    gracePeriod: 5000,
-    perfectZone: 12
-};
-
-let stars = [];
+let width, height;
+let target = { x: 0, y: 0, vx: 0, vy: 0 };
+let trail = [];
+let time = 0;
 
 function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    ship.x = canvas.width / 2; ship.y = canvas.height / 2;
-    leadPoint.x = canvas.width / 2; leadPoint.y = canvas.height / 2;
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+    target.x = width / 2;
+    target.y = height / 2;
 }
+
 window.addEventListener("resize", resize);
 resize();
 
-window.addEventListener("touchstart", (e) => {
-    if (!gameRunning) return;
-    for(let t of e.touches) (t.clientX < canvas.width/2) ? touchL = true : touchR = true;
-});
-window.addEventListener("touchend", () => { touchL = false; touchR = false; });
-
-window.addEventListener("devicemotion", (e) => {
-    if (!gameRunning) return;
-    const acc = e.accelerationIncludingGravity;
-    if (acc) {
-        tiltX = (acc.y || 0) - baseGY;
-        tiltY = (acc.x || 0) - (baseGX || 6);
-    }
-});
-
-function spawnStar(zOverride) {
-    stars.push({
-        originX: leadPoint.x, originY: leadPoint.y,
-        xOff: (Math.random() - 0.5) * 600, yOff: (Math.random() - 0.5) * 600,
-        z: zOverride || 1.0, size: Math.random() * 2 + 0.5
-    });
-}
-
 function update() {
-    if (!gameRunning) return;
-    
-    let now = Date.now();
-    let elapsed = now - startTime;
-    let remaining = Math.max(0, (CONFIG.trialDuration - elapsed) / 1000);
-    
-    timerDisp.innerText = remaining.toFixed(2);
-    if (remaining <= 5) timerDisp.className = "warning-red";
-    else if (remaining <= 15) timerDisp.className = "warning-orange";
-    else timerDisp.className = "";
+    time += 0.01;
 
-    if (elapsed >= CONFIG.trialDuration) { endGame(); return; }
+    // 1. ORGANIC FORCE (Simulated Perlin/Noise via Sine interference)
+    // We use odd primes to ensure the "drifting" force feels non-repeating
+    let forceX = Math.sin(time * 1.7) * 0.5 + Math.sin(time * 3.1) * 0.3;
+    let forceY = Math.cos(time * 1.9) * 0.5 + Math.cos(time * 2.7) * 0.3;
 
-    // ORGANIC NOISE MOVEMENT
-    let sf = 2.5 + (currentLevel - 1) * 0.4; // Speed scales 15% roughly
-    
-    // Occasionally pick a new target heading
-    if (Math.random() < 0.03) {
-        targetHeading += (Math.random() - 0.5) * Math.PI; 
-    }
+    // 2. RUBBER BAND (Gravity toward center)
+    // The further it drifts, the harder the "center" pulls it back
+    let dx = (width / 2) - target.x;
+    let dy = (height / 2) - target.y;
+    let pullStrength = 0.005; 
 
-    // Edge Avoidance (Soft push back to center)
-    let margin = 100;
-    if (leadPoint.x < margin) targetHeading = 0;
-    if (leadPoint.x > canvas.width - margin) targetHeading = Math.PI;
-    if (leadPoint.y < margin) targetHeading = Math.PI/2;
-    if (leadPoint.y > canvas.height - margin) targetHeading = -Math.PI/2;
+    target.vx += forceX + (dx * pullStrength);
+    target.vy += forceY + (dy * pullStrength);
 
-    // Smoothly turn toward heading
-    leadPoint.angle += (targetHeading - leadPoint.angle) * 0.05;
-    leadPoint.vx = Math.cos(leadPoint.angle) * sf;
-    leadPoint.vy = Math.sin(leadPoint.angle) * sf;
-    
-    leadPoint.x += leadPoint.vx;
-    leadPoint.y += leadPoint.vy;
+    // 3. FRICTION (Prevents infinite acceleration)
+    target.vx *= 0.96;
+    target.vy *= 0.96;
 
-    // Scoring
-    if (elapsed > CONFIG.gracePeriod && now - samplingTimer >= CONFIG.sampleRate) {
-        let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
-        if (dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
-        samplingTimer = now;
-        document.getElementById("score").innerText = Math.floor(Math.max(0, 200 - (totalError / 650)));
-    }
+    target.x += target.vx;
+    target.y += target.vy;
 
-    // Ship Physics
-    if (touchL) ship.vAngle -= CONFIG.rotTorque;
-    if (touchR) ship.vAngle += CONFIG.rotTorque;
-    ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
-    ship.vx += tiltX * CONFIG.driftSens; ship.vy += tiltY * CONFIG.driftSens;
-    ship.x += ship.vx; ship.y += ship.vy;
-    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
-    ship.x = Math.max(0, Math.min(canvas.width, ship.x));
-    ship.y = Math.max(0, Math.min(canvas.height, ship.y));
-
-    for (let i = stars.length - 1; i >= 0; i--) {
-        let s = stars[i]; s.z -= CONFIG.speedZ;
-        if (s.z <= 0) { stars.splice(i, 1); spawnStar(1.0); }
-    }
-}
-
-function endGame() {
-    gameRunning = false;
-    let final = document.getElementById("score").innerText;
-    document.getElementById("finalScore").innerText = final;
-    document.getElementById("results").style.display = "block";
-    if (final >= 180) {
-        document.getElementById("qualifyMsg").innerText = "ACE RATING - NEXT LEVEL OPEN";
-        nextLevelBtn.onclick = () => startLevel(currentLevel + 1);
-    } else {
-        document.getElementById("qualifyMsg").innerText = "RATING LOW - RETRY";
-        nextLevelBtn.onclick = () => startLevel(currentLevel);
-    }
-}
-
-function startLevel(lvl) {
-    currentLevel = lvl;
-    document.getElementById("lvlDisp").innerText = currentLevel;
-    document.getElementById("results").style.display = "none";
-    stars = [];
-    for(let i=0; i<CONFIG.starCount; i++) spawnStar(Math.random());
-    totalError = 0;
-    startTime = Date.now(); samplingTimer = startTime;
-    gameRunning = true;
+    // Store trail
+    trail.push({x: target.x, y: target.y});
+    if (trail.length > 120) trail.shift(); // Keep ~2 seconds of history
 }
 
 function draw() {
-    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    if (!gameRunning) return;
-    
-    // Target Hub
-    ctx.fillStyle = "rgba(0, 230, 118, 0.8)";
-    ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 8, 0, Math.PI * 2); ctx.fill();
+    // Clear with slight trail effect
+    ctx.fillStyle = "rgba(17, 17, 17, 1)";
+    ctx.fillRect(0, 0, width, height);
 
-    // Stars
-    stars.forEach(s => {
-        let scale = 1 / s.z;
-        let px = s.originX + (s.xOff * scale);
-        let py = s.originY + (s.yOff * scale);
-        ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.8, scale/10)})`;
-        ctx.fillRect(px, py, s.size * scale, s.size * scale);
-    });
-
-    // Ship
-    ctx.save();
-    ctx.translate(ship.x, ship.y);
-    ctx.rotate(ship.angle);
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 3;
+    // Draw Center Anchor (Visual Aid)
+    ctx.strokeStyle = "rgba(0, 150, 255, 0.2)";
     ctx.beginPath();
-    ctx.moveTo(25, 0); ctx.lineTo(-15, -ship.w/2); ctx.lineTo(-8, 0); ctx.lineTo(-15, ship.w/2);
-    ctx.closePath(); ctx.stroke();
-    ctx.fillStyle = "#00E676"; ctx.fillRect(-18, -12, 4, 24); ctx.restore();
+    ctx.arc(width/2, height/2, 50, 0, Math.PI*2);
+    ctx.stroke();
+
+    // Draw Trail
+    if (trail.length > 1) {
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(trail[0].x, trail[0].y);
+        for (let i = 1; i < trail.length; i++) {
+            ctx.lineTo(trail[i].x, trail[i].y);
+        }
+        ctx.stroke();
+    }
+
+    // Draw Target
+    ctx.fillStyle = "#00E676";
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#00E676";
+    ctx.beginPath();
+    ctx.arc(target.x, target.y, 10, 0, Math.PI*2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
 }
 
-function loop() { update(); draw(); requestAnimationFrame(loop); }
-loop();
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
 
-startBtn.addEventListener("click", async () => {
-    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        try { await DeviceMotionEvent.requestPermission(); } catch(e) {}
-    }
-    startBtn.style.display = "none";
-    startLevel(1);
-});
+loop();
 </script>
 </body>
 </html>
