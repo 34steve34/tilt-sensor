@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v44.6</title>
+<title>STAR STREAM v44.7</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -37,12 +37,12 @@
 <div id="deathScreen">HULL BREACHED<br>STABILIZING...</div>
 
 <div id="overlay">
-    <h1 style="margin-bottom: 10px; font-size: 16px;">VIRTUAL STRESS TEST v44.6</h1>
+    <h1 style="margin-bottom: 10px; font-size: 16px;">STRESS REDUCTION v44.7</h1>
     <div class="briefing">
-        - <b>PASS SCORE:</b> 150 (Calibrated for combat fatigue).<br>
-        - <b>FEEDBACK:</b> Threats flash WHITE when hit.<br>
-        - <b>FAILURE:</b> Failure to neutralize will result in Singularity Overrun.<br>
-        - <b>PHYSICS:</b> Rotation x2 speed with zero-drift isolation.
+        - <b>SCORE LOCK:</b> Score is frozen during Orange Bloom events.<br>
+        - <b>DOOM DELAY:</b> Singularity expansion speed halved (2s duration).<br>
+        - <b>FEEDBACK:</b> Threat flashes white on successful hit.<br>
+        - <b>PASS SCORE:</b> 150.
     </div>
     <button id="startBtn">INITIATE TRIAL</button>
 </div>
@@ -146,12 +146,12 @@ function update() {
     }
 
     if (threat.active && !threat.dying) {
-        if (now - threat.startTime > 5000) { threat.dying = true; } // Start Doom expansion
+        if (now - threat.startTime > 5000) { threat.dying = true; } 
         if (threat.flicker > 0) threat.flicker--;
     }
 
     if (threat.dying) {
-        threat.doomScale += 0.04;
+        threat.doomScale += 0.02; // Halved from 0.04 to slow down the "feeling of doom"
         if (threat.doomScale > 2.0) { die(); return; }
     }
 
@@ -168,8 +168,12 @@ function update() {
     leadPoint.x += (dX - leadPoint.x) * (0.07 * evalSlowdown * targetSpeedScale);
     leadPoint.y += (dY - leadPoint.y) * (0.07 * evalSlowdown * targetSpeedScale);
 
-    let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
-    if (elapsed > 3000 && dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
+    // --- SCORE FREEZE LOGIC ---
+    // Error only accumulates if no threat is active. 
+    if (!threat.active && elapsed > 3000) {
+        let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
+        if (dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
+    }
     
     let score = Math.floor(Math.max(0, 200 - (totalError / 900)));
     let sDisp = document.getElementById("scoreDisp");
@@ -195,7 +199,7 @@ function update() {
             let diff = Math.abs(((bAng - threat.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
             let dToCenter = Math.hypot(b.x - canvas.width/2, b.y - canvas.height/2);
             if (dToCenter > Math.max(canvas.width, canvas.height) * 0.35 && diff < 0.7) {
-                threat.hits++; threat.flicker = 6; // Visual hit flash
+                threat.hits++; threat.flicker = 6;
                 bullets.splice(i, 1);
                 if (threat.hits >= 3) threat.active = false;
                 continue;
@@ -244,7 +248,6 @@ function draw() {
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning && evalSlowdown === 1.0) return;
     
-    // THREAT DRAWING
     if (threat.active) {
         ctx.save();
         ctx.translate(canvas.width/2, canvas.height/2);
@@ -253,7 +256,7 @@ function draw() {
         let bloomSize = Math.max(canvas.width, canvas.height) * (0.5 + threat.doomScale);
         
         let grad = ctx.createRadialGradient(targetX, targetY, 0, targetX, targetY, bloomSize);
-        let baseColor = threat.flicker > 0 ? "255, 255, 255" : "255, 120, 0"; // White flash on hit
+        let baseColor = threat.flicker > 0 ? "255, 255, 255" : "255, 120, 0"; 
         let alpha = threat.dying ? 0.8 : 0.6;
         
         grad.addColorStop(0, `rgba(${baseColor}, ${alpha})`);
@@ -271,6 +274,13 @@ function draw() {
         ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.8, scale/8)})`;
         ctx.fillRect(s.originX + (s.xOff * scale), s.originY + (s.yOff * scale), s.size * scale, s.size * scale);
     });
+
+    // Score visibility aid (frozen state)
+    if (threat.active && !threat.dying) {
+        ctx.strokeStyle = "rgba(255, 165, 0, 0.5)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(15, 15, 250, 50); // Box around UI when score is frozen
+    }
 
     ctx.fillStyle = "rgba(0, 230, 118, 0.8)";
     ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 14, 0, Math.PI * 2); ctx.fill();
