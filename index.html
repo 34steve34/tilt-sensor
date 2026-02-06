@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Space Slalom v34.1</title>
+<title>Space Stream v35.0</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
@@ -18,8 +18,8 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="ui">SLALOM v34.1 | SPEED: <span id="thrust">0</span>%</div>
-<button id="startBtn">ENGAGE SLALOM</button>
+<div id="ui">STREAM v35.0 | DEPTH: <span id="depth">0</span></div>
+<button id="startBtn">INITIALIZE STREAM</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -27,209 +27,132 @@ const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 
 let gameRunning = false;
-let isPaused = false;
-let touchL = false, touchR = false;
 let tiltX = 0, tiltY = 0;
-let baseGX = 0, baseGY = 0; 
+let baseGX = 0, baseGY = 0;
 let frameCount = 0;
-let speedMultiplier = 1.0; 
+
+// The "Lead Point" that the pilot follows
+let leadPoint = { x: 0, y: 0, targetX: 0, targetY: 0 };
 
 const CONFIG = {
-    rotTorque: 0.0025,    
-    driftSens: 0.4,      
-    driftFriction: 0.8,  
-    rotFriction: 0.9,    
-    speedBase: 0.08,      // Linear speed base
-    gateInterval: 40,     // (unused by new system, kept for reference)
-    maxZ: 100,            // Linear Z-depth
-    gateSizeBase: 0.6,    // 60% of screen height
-    gateAspect: 2.5
+    driftSens: 0.45,
+    friction: 0.82,
+    starCount: 250,
+    speed: 0.05,
+    pathWidth: 200 // The "Safe Band" radius
 };
 
-let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0, w: 60, h: 6 };
-let gates = []; 
-let stars = []; 
+let ship = { x: 0, y: 0, vx: 0, vy: 0, w: 50 };
+let stars = [];
 let lastAcc = null;
-
-// *** NEW: simple state to control gate spacing
-let readyForNextGate = false;          // when true, we are allowed to spawn the next gate
-let gateCooldownFrames = 40;          // how many frames to wait AFTER a gate leaves before spawning next
-let gateCooldownCounter = 0;          // counts up during cooldown
 
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    ship.x = canvas.width / 2; ship.y = canvas.height / 2;
-    initStars();
-}
-
-function initStars() {
-    stars = [];
-    for(let i=0; i<100; i++) {
-        stars.push({
-            x: Math.random() * canvas.width - canvas.width/2,
-            y: Math.random() * canvas.height - canvas.height/2,
-            z: Math.random() * CONFIG.maxZ
-        });
-    }
+    ship.x = canvas.width / 2;
+    ship.y = canvas.height / 2;
+    leadPoint.x = canvas.width / 2;
+    leadPoint.y = canvas.height / 2;
 }
 
 window.addEventListener("resize", resize);
 resize();
 
-window.addEventListener("touchstart", (e) => {
-    if (!gameRunning || isPaused) return;
-    for(let t of e.touches) (t.clientX < canvas.width/2) ? touchL = true : touchR = true;
-});
-window.addEventListener("touchend", () => { touchL = false; touchR = false; });
-
 window.addEventListener("devicemotion", (e) => {
     lastAcc = e.accelerationIncludingGravity;
-    if (!gameRunning || isPaused || !lastAcc) return;
-    tiltX = (lastAcc.y || 0) - baseGY; 
-    tiltY = (lastAcc.x || 0) - (baseGX || 6); 
+    if (!gameRunning || !lastAcc) return;
+    tiltX = (lastAcc.y || 0) - baseGY;
+    tiltY = (lastAcc.x || 0) - (baseGX || 6);
 });
 
-function spawnGate() {
-    gates.push({ 
-        z: CONFIG.maxZ, 
-        x: (Math.random() - 0.5) * canvas.width * 1.5, 
-        y: (Math.random() - 0.5) * canvas.height * 1.2, 
-        roll: (Math.random() - 0.5) * Math.PI,
-        passed: false
-    });
+function initStars() {
+    stars = [];
+    for(let i=0; i<CONFIG.starCount; i++) {
+        spawnStar(Math.random());
+    }
 }
 
-function initGame() {
-    gates = []; frameCount = 0; isPaused = false;
-    ship.x = canvas.width / 2; ship.y = canvas.height / 2;
-    ship.vx = 0; ship.vy = 0; ship.angle = -Math.PI/2; ship.vAngle = 0;
-
-    // *** NEW: reset spacing state, spawn ONE gate far ahead
-    readyForNextGate = false;
-    gateCooldownCounter = 0;
-    spawnGate();
+function spawnStar(zOverride) {
+    // Stars are born at the current Lead Point location
+    stars.push({
+        originX: leadPoint.x,
+        originY: leadPoint.y,
+        xOffset: (Math.random() - 0.5) * CONFIG.pathWidth * 2,
+        yOffset: (Math.random() - 0.5) * CONFIG.pathWidth * 2,
+        z: zOverride || 1.0,
+        size: Math.random() * 2 + 1
+    });
 }
 
 function update() {
-    if (!gameRunning || isPaused) return;
+    if (!gameRunning) return;
     frameCount++;
 
-    // *** REMOVED: frame-based spawning
-    // if (frameCount % CONFIG.gateInterval === 0) spawnGate();
+    // Meandering Logic: Lead Point drifts smoothly
+    leadPoint.x = (canvas.width / 2) + Math.sin(frameCount * 0.01) * (canvas.width * 0.35);
+    leadPoint.y = (canvas.height / 2) + Math.cos(frameCount * 0.015) * (canvas.height * 0.25);
 
-    // Movement
-    if (touchL) ship.vAngle -= CONFIG.rotTorque;
-    if (touchR) ship.vAngle += CONFIG.rotTorque;
-    ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
-    ship.vx += tiltX * CONFIG.driftSens; ship.vy += tiltY * CONFIG.driftSens;
+    // Ship Physics
+    ship.vx += tiltX * CONFIG.driftSens;
+    ship.vy += tiltY * CONFIG.driftSens;
     ship.x += ship.vx; ship.y += ship.vy;
-    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
+    ship.vx *= CONFIG.friction; ship.vy *= CONFIG.friction;
+    
+    // Contain ship on screen
     ship.x = Math.max(0, Math.min(canvas.width, ship.x));
     ship.y = Math.max(0, Math.min(canvas.height, ship.y));
 
-    // Linear Star Movement
-    stars.forEach(s => {
-        s.z -= CONFIG.speedBase * 2;
-        if(s.z <= 0) s.z = CONFIG.maxZ;
-    });
+    // Update Particles
+    for (let i = stars.length - 1; i >= 0; i--) {
+        let s = stars[i];
+        s.z -= CONFIG.speed;
 
-    // Linear Gate Movement & Collision
-    for (let i = gates.length - 1; i >= 0; i--) {
-        let g = gates[i];
-        g.z -= CONFIG.speedBase;
-
-        // COLLISION: Only check when the gate is physically at the ship's plane (Z close to 0)
-        if (!g.passed && g.z <= 1 && g.z >= -1) {
-            let sW = canvas.height * CONFIG.gateSizeBase;
-            let sH = sW / CONFIG.gateAspect;
-            
-            // Relational Math (is ship inside the box?)
-            let dx = ship.x - (canvas.width/2 + g.x * (g.z/CONFIG.maxZ)); 
-            let dy = ship.y - (canvas.height/2 + g.y * (g.z/CONFIG.maxZ));
-            let rx = dx * Math.cos(-g.roll) - dy * Math.sin(-g.roll);
-            let ry = dx * Math.sin(-g.roll) + dy * Math.cos(-g.roll);
-
-            if (Math.abs(rx) > sW/2 || Math.abs(ry) > sH/2) {
-                isPaused = true;
-                setTimeout(() => { gameRunning = false; startBtn.style.display = "block"; }, 3000);
-            }
-            g.passed = true;
-        }
-
-        // When gate is far behind the ship, remove it and start cooldown
-        if (g.z < -5) {
-            gates.splice(i, 1);
-
-            // *** NEW: Once the last visible gate is gone, start cooldown before next
-            if (gates.length === 0) {
-                readyForNextGate = false;
-                gateCooldownCounter = 0;
-            }
+        if (s.z <= 0) {
+            stars.splice(i, 1);
+            spawnStar(1.0);
         }
     }
 
-    // *** NEW: handle cooldown and spawn next gate when the “lane” is clear
-    if (gates.length === 0) {
-        if (!readyForNextGate) {
-            gateCooldownCounter++;
-            if (gateCooldownCounter >= gateCooldownFrames) {
-                readyForNextGate = true;
-            }
-        } else {
-            // “One gate, then time to prepare, then the next”
-            spawnGate();
-            readyForNextGate = false;
-            gateCooldownCounter = 0;
-        }
+    // Check if ship is within the "Band" (Lead Point projected at Z=0)
+    let distToCenter = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
+    if (distToCenter > CONFIG.pathWidth * 1.5) {
+        // Warning: drifting out of the stream
+        document.body.style.backgroundColor = `rgba(255, 0, 0, ${Math.min(0.3, (distToCenter - CONFIG.pathWidth)/500)})`;
+    } else {
+        document.body.style.backgroundColor = "#000";
     }
+
+    document.getElementById("depth").innerText = frameCount;
 }
 
 function draw() {
-    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
-    const mx = canvas.width / 2, my = canvas.height / 2;
 
+    // Draw Star Band
     stars.forEach(s => {
-        let scale = 1 - (s.z / CONFIG.maxZ);
-        ctx.fillStyle = `rgba(255, 255, 255, ${scale})`;
-        ctx.fillRect(mx + s.x * scale, my + s.y * scale, 2, 2);
+        // Perspective calculation
+        let scale = 1 / s.z;
+        let pX = s.originX + (s.xOffset * scale);
+        let pY = s.originY + (s.yOffset * scale);
+        
+        let alpha = Math.min(1, scale / 10);
+        ctx.fillStyle = `rgba(0, 230, 118, ${alpha})`;
+        
+        let visualSize = s.size * scale * 0.5;
+        ctx.beginPath();
+        ctx.arc(pX, pY, visualSize, 0, Math.PI * 2);
+        ctx.fill();
     });
 
-    for (let i = 0; i < gates.length; i++) {
-        let g = gates[i];
-        let scale = 1 - (g.z / CONFIG.maxZ);
-        if (scale < 0) continue;
-
-        let sW = (canvas.height * CONFIG.gateSizeBase) * (0.1 + scale * 2);
-        let sH = sW / CONFIG.gateAspect;
-        let sX = mx + g.x * scale; let sY = my + g.y * scale;
-
-        ctx.save();
-        ctx.translate(sX, sY); ctx.rotate(g.roll);
-        
-        // VISUAL SYNC: Gate turns white and glows ONLY when you are passing through it
-        let isPassing = (g.z <= 10 && g.z >= -1);
-        ctx.strokeStyle = isPassing ? "#fff" : `rgba(0, 230, 118, ${0.5 - (g.z/CONFIG.maxZ)})`;
-        ctx.lineWidth = isPassing ? 6 : 2;
-        
-        if (isPassing) {
-            ctx.fillStyle = "rgba(0, 230, 118, 0.2)";
-            ctx.fillRect(-sW/2, -sH/2, sW, sH);
-            ctx.shadowBlur = 20; ctx.shadowColor = "#fff";
-        }
-
-        ctx.strokeRect(-sW/2, -sH/2, sW, sH);
-        ctx.restore();
-    }
-
-    // Ship
+    // Draw Ship
     ctx.save();
-    ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
-    ctx.strokeStyle = isPaused ? "#f00" : "#fff"; 
+    ctx.translate(ship.x, ship.y);
+    ctx.strokeStyle = "#fff";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(25, 0); ctx.lineTo(-10, -ship.w/2); ctx.lineTo(-5, 0); ctx.lineTo(-10, ship.w/2);
+    ctx.moveTo(15, 0); ctx.lineTo(-10, -15); ctx.lineTo(-10, 15);
     ctx.closePath(); ctx.stroke();
     ctx.restore();
 }
@@ -242,7 +165,9 @@ startBtn.addEventListener("click", async () => {
         try { await DeviceMotionEvent.requestPermission(); } catch(e) {}
     }
     if (lastAcc) { baseGY = lastAcc.y || 0; baseGX = lastAcc.x || 0; }
-    initGame(); gameRunning = true; startBtn.style.display = "none";
+    initStars();
+    gameRunning = true;
+    startBtn.style.display = "none";
 });
 </script>
 </body>
