@@ -17,7 +17,8 @@
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
         text-align: center; z-index: 100; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; width: 85%;
     }
-    #startBtn { padding: 20px; font-size: 20px; background: #00E676; color: #000; border: none; cursor: pointer; font-weight: bold; width: 100%; }
+    #startBtn { padding: 20px; font-size: 20px; background: #00E676; color: #000; border: none; cursor: pointer; font-weight: bold; width: 100%; border-radius: 4px; }
+    #startBtn:active { background: #fff; }
     #results {
         position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
         text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110;
@@ -25,7 +26,7 @@
     #deathScreen {
         position: absolute; top: 0; left: 0; width: 100%; height: 100%;
         display: none; z-index: 200; align-items: center; justify-content: center;
-        color: #fff; font-size: 32px; font-weight: bold; text-align: center;
+        color: #fff; font-size: 32px; font-weight: bold; text-align: center; background: rgba(255,100,0,0.3);
     }
 </style>
 </head>
@@ -40,15 +41,16 @@
 <div id="deathScreen">HULL BREACHED<br>STABILIZING...</div>
 
 <div id="overlay">
-    <img src="STARSTREAM-192.png" style="width: 80px; border-radius: 15px; margin-bottom: 15px;">
-    <h1 style="margin-bottom: 10px; font-size: 18px;">STANDALONE v45.0</h1>
+    <img src="STARSTREAM-192.png" id="logoImg" style="width: 80px; border-radius: 15px; margin-bottom: 15px; border: 1px solid #00E676;">
+    <h1 style="margin-bottom: 10px; font-size: 18px;">SYSTEM INITIALIZED</h1>
     <div style="color: #fff; font-size: 11px; margin-bottom: 20px; text-align: left; line-height: 1.5; border-left: 3px solid #00E676; padding-left: 10px;">
         • <b>LEFT TOP:</b> Rotate CCW ↺<br>
         • <b>LEFT BTM:</b> Rotate CW ↻<br>
         • <b>RIGHT:</b> Pulse Cannon ⚡<br>
-        • <b>TILT:</b> Vector Drift (Isolated)
+        • <b>TILT:</b> Vector Drift
     </div>
     <button id="startBtn">ENGAGE ENGINES</button>
+    <p id="statusMsg" style="font-size: 9px; margin-top: 10px; color: #555;">Awaiting Pilot Authorization...</p>
 </div>
 
 <div id="results">
@@ -59,15 +61,19 @@
 </div>
 
 <script>
-// --- SERVICE WORKER REGISTRATION ---
+// --- SERVICE WORKER ---
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(err => console.log("SW failed", err));
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').then(reg => {
+            console.log('SW Registered');
+        }).catch(err => console.log('SW Failed', err));
+    });
 }
 
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
-const nextLevelBtn = document.getElementById("nextLevelBtn");
+const statusMsg = document.getElementById("statusMsg");
 
 let gameRunning = false, currentLevel = 1, frameCount = 0;
 let evalSlowdown = 1.0, activeRot = 0;
@@ -80,35 +86,41 @@ let leadPoint = { x: 0, y: 0 };
 
 const CONFIG = {
     rotTorque: 0.006, driftSens: 0.35, driftFriction: 0.85, rotFriction: 0.78, 
-    maxVelocity: 14, starCount: 500, speedZ: 0.02, trialDuration: 30000, 
+    maxVelocity: 14, starCount: 400, speedZ: 0.02, trialDuration: 30000, 
     perfectZone: 18, bulletSpeed: 25, passScore: 150
 };
 
 function resize() {
     canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    if(!gameRunning) { ship.x = canvas.width/2; ship.y = canvas.height/2; }
+    ship.x = canvas.width/2; ship.y = canvas.height/2;
 }
 window.addEventListener("resize", resize); resize();
 
-function updateTouches(e) {
+// Improved touch handling for the split controls
+function handleInput(e) {
+    if (!gameRunning) return;
     activeRot = 0;
-    if (e.touches.length === 0) return;
-    for(let t of e.touches) {
-        if (t.clientX < canvas.width/2) {
-            activeRot = (t.clientY < canvas.height/2) ? -1 : 1;
-        } else if (e.type === "touchstart") {
-            fireBullet();
+    if (e.touches.length > 0) {
+        for (let t of e.touches) {
+            if (t.clientX < canvas.width / 2) {
+                activeRot = (t.clientY < canvas.height / 2) ? -1 : 1;
+            } else if (e.type === "touchstart") {
+                fireBullet();
+            }
         }
     }
 }
 
-window.addEventListener("touchstart", (e) => { if(gameRunning) updateTouches(e); e.preventDefault(); }, {passive: false});
-window.addEventListener("touchmove", (e) => { if(gameRunning) updateTouches(e); e.preventDefault(); }, {passive: false});
-window.addEventListener("touchend", (e) => { updateTouches(e); });
+window.addEventListener("touchstart", (e) => { handleInput(e); if(gameRunning) e.preventDefault(); }, {passive: false});
+window.addEventListener("touchmove", (e) => { handleInput(e); if(gameRunning) e.preventDefault(); }, {passive: false});
+window.addEventListener("touchend", (e) => { activeRot = 0; });
 
 window.addEventListener("devicemotion", (e) => {
     const acc = e.accelerationIncludingGravity;
-    if (acc && gameRunning) { tiltX = (acc.y || 0); tiltY = (acc.x || 0) - 6; }
+    if (acc && gameRunning) { 
+        tiltX = (acc.y || 0); 
+        tiltY = (acc.x || 0) - 6; 
+    }
 });
 
 function fireBullet() {
@@ -116,7 +128,7 @@ function fireBullet() {
 }
 
 function spawnStar(zOverride) {
-    stars.push({ originX: leadPoint.x, originY: leadPoint.y, xOff: (Math.random()-0.5)*600, yOff: (Math.random()-0.5)*600, z: zOverride || 1.0, size: Math.random()*2+1 });
+    stars.push({ originX: leadPoint.x, originY: leadPoint.y, xOff: (Math.random()-0.5)*800, yOff: (Math.random()-0.5)*800, z: zOverride || 1.0, size: Math.random()*2+1 });
 }
 
 function update() {
@@ -133,14 +145,14 @@ function update() {
 
     if (threat.active) {
         if (!threat.dying && now - threat.startTime > 5000) threat.dying = true;
-        if (threat.dying) { threat.doomScale += 0.02; if (threat.doomScale > 2) die(); }
+        if (threat.dying) { threat.doomScale += 0.02; if (threat.doomScale > 2) triggerDeath(); }
         threat.flicker = Math.max(0, threat.flicker - 1);
     }
 
-    if (elapsed >= CONFIG.trialDuration) { evalSlowdown = 0.7; endGame(); return; }
+    if (elapsed >= CONFIG.trialDuration) { endGame(); return; }
 
     let ts = (threat.active && !threat.dying) ? 0.5 : 1.0;
-    frameCount += (1 * evalSlowdown * ts);
+    frameCount += (1 * ts);
     let t = frameCount * 0.012 * (1 + (currentLevel-1)*0.1);
     leadPoint.x += ((canvas.width/2 + Math.sin(t*0.8)*0.4*canvas.width) - leadPoint.x) * 0.07;
     leadPoint.y += ((canvas.height/2 + Math.cos(t*0.7)*0.3*canvas.height) - leadPoint.y) * 0.07;
@@ -171,25 +183,28 @@ function update() {
         }
         if (b.x < -100 || b.x > canvas.width+100 || b.y < -100 || b.y > canvas.height+100) bullets.splice(i, 1);
     }
-    stars.forEach(s => { s.z -= CONFIG.speedZ * evalSlowdown; if(s.z <= 0) s.z = 1.0; });
+    stars.forEach(s => { s.z -= CONFIG.speedZ; if(s.z <= 0) s.z = 1.0; });
 }
 
-function die() {
+function triggerDeath() {
     gameRunning = false; document.getElementById("deathScreen").style.display = "flex";
     setTimeout(() => { document.getElementById("deathScreen").style.display = "none"; startLevel(currentLevel); }, 1500);
 }
 
 function endGame() {
-    gameRunning = false; document.getElementById("finalScore").innerText = document.getElementById("scoreDisp").innerText;
+    gameRunning = false;
+    document.getElementById("finalScore").innerText = document.getElementById("scoreDisp").innerText;
     document.getElementById("results").style.display = "block";
     let passed = parseInt(document.getElementById("scoreDisp").innerText) >= CONFIG.passScore;
     document.getElementById("qualifyMsg").innerText = passed ? "SUCCESS - PILOT QUALIFIED" : "PRECISION FAILURE - RETRY";
-    nextLevelBtn.onclick = () => startLevel(passed ? currentLevel + 1 : currentLevel);
+    document.getElementById("nextLevelBtn").onclick = () => startLevel(passed ? currentLevel + 1 : currentLevel);
 }
 
 function startLevel(lvl) {
-    currentLevel = lvl; evalSlowdown = 1.0; document.getElementById("lvlDisp").innerText = currentLevel;
-    document.getElementById("results").style.display = "none"; document.getElementById("overlay").style.display = "none";
+    currentLevel = lvl;
+    document.getElementById("lvlDisp").innerText = currentLevel;
+    document.getElementById("results").style.display = "none";
+    document.getElementById("overlay").style.display = "none";
     ship.x = canvas.width/2; ship.y = canvas.height/2; ship.vx = 0; ship.vy = 0; ship.vAngle = 0;
     stars = []; bullets = []; threat.active = false; threat.lastTrigger = 0;
     for(let i=0; i<CONFIG.starCount; i++) spawnStar(Math.random());
@@ -198,7 +213,7 @@ function startLevel(lvl) {
 
 function draw() {
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    if (!gameRunning && evalSlowdown === 1.0) return;
+    if (!gameRunning && !stars.length) return;
     
     if (threat.active) {
         ctx.save(); ctx.translate(canvas.width/2, canvas.height/2);
@@ -217,8 +232,8 @@ function draw() {
         ctx.fillRect(s.originX + (s.xOff * scale), s.originY + (s.yOff * scale), s.size * scale, s.size * scale);
     });
 
-    // Control Help: Subtle Divider
-    ctx.strokeStyle = "rgba(0, 230, 118, 0.1)"; ctx.setLineDash([5, 15]);
+    // Sector Dividers
+    ctx.strokeStyle = "rgba(0, 230, 118, 0.08)"; ctx.setLineDash([5, 15]);
     ctx.beginPath(); ctx.moveTo(0, canvas.height/2); ctx.lineTo(canvas.width/2, canvas.height/2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(canvas.width/2, 0); ctx.lineTo(canvas.width/2, canvas.height); ctx.stroke();
     ctx.setLineDash([]);
@@ -235,10 +250,26 @@ function draw() {
 function loop() { update(); draw(); requestAnimationFrame(loop); }
 loop();
 
+// --- CRITICAL PERMISSION HANDSHAKE ---
 startBtn.addEventListener("click", async () => {
+    statusMsg.innerText = "Requesting Core Access...";
+    
+    // 1. Request Tilt Access (iOS specific)
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        try { await DeviceMotionEvent.requestPermission(); } catch(e) {}
+        try {
+            const permission = await DeviceMotionEvent.requestPermission();
+            if (permission !== 'granted') {
+                statusMsg.innerText = "Permission Denied. Check Settings.";
+                return;
+            }
+        } catch (e) {
+            statusMsg.innerText = "Sensor Error. Try Refreshing.";
+            return;
+        }
     }
+
+    // 2. Start Level
+    statusMsg.innerText = "Engaged.";
     startLevel(1);
 });
 </script>
