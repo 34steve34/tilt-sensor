@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v39.0</title>
+<title>STAR STREAM v40.0</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
+    body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; transition: background 0.3s; }
     #gameCanvas { display: block; }
-    #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 18px; }
+    #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 20px; line-height: 1.4; }
     #startBtn {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
         padding: 25px 50px; font-size: 24px; background: #00E676; color: #000;
@@ -17,16 +17,18 @@
     }
     #results {
         position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
-        text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110; min-width: 300px;
+        text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 2px solid #00E676; z-index: 110; min-width: 320px;
     }
+    .warning-orange { color: #FFA500 !important; }
+    .warning-red { color: #FF0000 !important; font-weight: bold; text-shadow: 0 0 10px #FF0000; }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <div id="ui">
-    STAR STREAM v39.0 | LVL: <span id="lvlDisp">1</span><br>
+    STAR STREAM v40.0 | LVL: <span id="lvlDisp">1</span><br>
     TIME: <span id="timer">30.00</span>s<br>
-    SCORE: <span id="score">0</span>
+    SCORE: <span id="score">200</span>
 </div>
 
 <div id="results">
@@ -37,13 +39,14 @@
     <button id="nextLevelBtn" style="padding: 15px 30px; font-size: 18px; cursor:pointer; background:#00E676; border:none; font-weight:bold;">ENGAGE NEXT LEVEL</button>
 </div>
 
-<button id="startBtn">ENGAGE LEVEL 1</button>
+<button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 const nextLevelBtn = document.getElementById("nextLevelBtn");
+const timerDisp = document.getElementById("timer");
 
 let gameRunning = false;
 let currentLevel = 1;
@@ -61,10 +64,11 @@ const CONFIG = {
     driftSens: 0.35,      
     driftFriction: 0.85,  
     rotFriction: 0.92,    
-    starCount: 500,       
+    starCount: 650,       // Increased by 30%
     speed: 0.022,         
     trialDuration: 30000,
-    sampleRate: 50 // 20 times per second (1000ms / 20 = 50ms)
+    sampleRate: 50, 
+    gracePeriod: 5000     // 5 second head start
 };
 
 let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0, w: 80 };
@@ -96,7 +100,7 @@ window.addEventListener("devicemotion", (e) => {
 function spawnStar(zOverride) {
     stars.push({
         originX: leadPoint.x, originY: leadPoint.y,
-        xOffset: (Math.random() - 0.5) * 500, yOffset: (Math.random() - 0.5) * 500,
+        xOffset: (Math.random() - 0.5) * 550, yOffset: (Math.random() - 0.5) * 550,
         z: zOverride || 1.0, size: Math.random() * 2 + 0.5
     });
 }
@@ -107,7 +111,16 @@ function update() {
     let now = Date.now();
     let elapsed = now - startTime;
     let remaining = Math.max(0, (CONFIG.trialDuration - elapsed) / 1000);
-    document.getElementById("timer").innerText = remaining.toFixed(2);
+    
+    // UI Color Logic for Peripheral Vision
+    timerDisp.innerText = remaining.toFixed(2);
+    if (remaining <= 5) {
+        timerDisp.className = "warning-red";
+    } else if (remaining <= 15) {
+        timerDisp.className = "warning-orange";
+    } else {
+        timerDisp.className = "";
+    }
 
     if (elapsed >= CONFIG.trialDuration) {
         endGame();
@@ -115,20 +128,18 @@ function update() {
     }
 
     frameCount++;
-
-    // Target movement speed scales by 10% per level
     let speedFactor = 1 + (currentLevel - 1) * 0.1;
     leadPoint.x = (canvas.width / 2) + Math.sin(frameCount * 0.01 * speedFactor) * (canvas.width * 0.35);
     leadPoint.y = (canvas.height / 2) + Math.cos(frameCount * 0.015 * speedFactor) * (canvas.height * 0.25);
 
-    // COG Scoring Logic (20 samples per sec)
-    if (now - samplingTimer >= CONFIG.sampleRate) {
+    // Scoring with 5s Grace Period
+    if (elapsed > CONFIG.gracePeriod && now - samplingTimer >= CONFIG.sampleRate) {
         let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
-        totalError += dist;
+        // Made Lvl 1 easier: lower error divisor
+        totalError += Math.max(0, dist - 15); 
         samplingTimer = now;
         
-        // Convert error to a "High Score" display: Starting points minus accumulated error
-        let displayScore = Math.max(0, 200 - (totalError / 600)); 
+        let displayScore = Math.max(0, 200 - (totalError / 750)); 
         document.getElementById("score").innerText = Math.floor(displayScore);
     }
 
@@ -138,7 +149,7 @@ function update() {
     ship.angle += ship.vAngle; ship.vAngle *= CONFIG.rotFriction;
     ship.vx += tiltX * CONFIG.driftSens; ship.vy += tiltY * CONFIG.driftSens;
     ship.x += ship.vx; ship.y += ship.vy;
-    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.driftFriction;
+    ship.vx *= CONFIG.driftFriction; ship.vy *= CONFIG.friction || 0.85;
     ship.x = Math.max(0, Math.min(canvas.width, ship.x));
     ship.y = Math.max(0, Math.min(canvas.height, ship.y));
 
@@ -150,17 +161,17 @@ function update() {
 
 function endGame() {
     gameRunning = false;
-    let finalRating = Math.floor(Math.max(0, 200 - (totalError / 600)));
+    let finalRating = Math.floor(Math.max(0, 200 - (totalError / 750)));
     document.getElementById("finalScore").innerText = finalRating;
     document.getElementById("results").style.display = "block";
     
     if (finalRating >= 180) {
-        document.getElementById("qualifyMsg").innerText = "LEVEL " + (currentLevel + 1) + " UNLOCKED!";
-        nextLevelBtn.innerText = "ENGAGE LEVEL " + (currentLevel + 1);
+        document.getElementById("qualifyMsg").innerText = "MISSION SUCCESS - NEXT LEVEL OPEN";
+        nextLevelBtn.innerText = "PROCEED TO LEVEL " + (currentLevel + 1);
         nextLevelBtn.onclick = () => { startLevel(currentLevel + 1); };
     } else {
-        document.getElementById("qualifyMsg").innerText = "SCORE 180 TO PROGRESS";
-        nextLevelBtn.innerText = "RETRY LEVEL " + currentLevel;
+        document.getElementById("qualifyMsg").innerText = "RATING TOO LOW FOR PROMOTION";
+        nextLevelBtn.innerText = "RE-FLY LEVEL " + currentLevel;
         nextLevelBtn.onclick = () => { startLevel(currentLevel); };
     }
 }
@@ -169,6 +180,7 @@ function startLevel(lvl) {
     currentLevel = lvl;
     document.getElementById("lvlDisp").innerText = currentLevel;
     document.getElementById("results").style.display = "none";
+    document.getElementById("score").innerText = "200";
     stars = [];
     for(let i=0; i<CONFIG.starCount; i++) spawnStar(Math.random());
     totalError = 0;
@@ -180,14 +192,22 @@ function startLevel(lvl) {
 function draw() {
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!gameRunning) return;
-    ctx.fillStyle = "rgba(0, 230, 118, 0.7)";
-    ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 10, 0, Math.PI * 2); ctx.fill();
+    
+    // Draw "Safe Zone" glow around target
+    let pulse = 8 + Math.sin(frameCount * 0.1) * 2;
+    ctx.fillStyle = "rgba(0, 230, 118, 0.4)";
+    ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, pulse + 5, 0, Math.PI * 2); ctx.fill();
+    
+    ctx.fillStyle = "rgba(0, 230, 118, 0.9)";
+    ctx.beginPath(); ctx.arc(leadPoint.x, leadPoint.y, 8, 0, Math.PI * 2); ctx.fill();
+    
     stars.forEach(s => {
         let scale = 1 / s.z;
         let pX = s.originX + (s.xOffset * scale); let pY = s.originY + (s.yOffset * scale);
         ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.8, scale / 10)})`;
         ctx.fillRect(pX, pY, s.size * scale, s.size * scale);
     });
+    
     ctx.save();
     ctx.translate(ship.x, ship.y); ctx.rotate(ship.angle);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.beginPath();
