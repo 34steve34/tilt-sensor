@@ -3,16 +3,22 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>STAR STREAM v44.0 - Phase Drift Edition</title>
+<title>STAR STREAM v44.0</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', monospace; color: #00E676; }
     #gameCanvas { display: block; }
     #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; font-size: 20px; }
-    #startBtn {
+    
+    #overlay {
         position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        padding: 25px 50px; font-size: 24px; background: #00E676; color: #000;
-        border: none; border-radius: 8px; cursor: pointer; z-index: 100; font-weight: bold; box-shadow: 0 0 20px #00E676;
+        text-align: center; z-index: 100; background: rgba(0,0,0,0.85); padding: 30px; border: 2px solid #00E676;
+    }
+    .briefing { color: #fff; font-size: 14px; margin-bottom: 25px; line-height: 1.6; text-align: left; border-left: 3px solid #00E676; padding-left: 15px; }
+    
+    #startBtn {
+        padding: 20px 40px; font-size: 24px; background: #00E676; color: #000;
+        border: none; border-radius: 8px; cursor: pointer; font-weight: bold; box-shadow: 0 0 20px #00E676;
     }
     #results {
         position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
@@ -29,14 +35,23 @@
     TIME: <span id="timer">30.00</span>s | SCORE: <span id="score">200</span>
 </div>
 
+<div id="overlay">
+    <h1 style="margin-bottom: 15px;">PRE-FLIGHT BRIEFING</h1>
+    <div class="briefing">
+        1. <b>TILT DEVICE</b> to drift ship (Up/Down/Left/Right).<br>
+        2. <b>TAP LEFT/RIGHT SCREEN</b> to rotate ship hull.<br>
+        3. <b>TRACK THE TARGET:</b> Stay within the green reticle.<br>
+        4. <b>ACE RATING:</b> Score 180+ to advance.
+    </div>
+    <button id="startBtn">ENGAGE ENGINES</button>
+</div>
+
 <div id="results">
     <h1>TRIAL COMPLETE</h1>
     <h2 id="finalScore" style="font-size: 64px; margin: 10px 0; color: #fff;">0</h2>
     <p id="qualifyMsg" style="margin-bottom: 20px;"></p>
     <button id="nextLevelBtn" style="padding: 15px 30px; font-size: 18px; cursor:pointer; background:#00E676; border:none; font-weight:bold;">NEXT TRIAL</button>
 </div>
-
-<button id="startBtn">ENGAGE ENGINES</button>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
@@ -50,7 +65,6 @@ let touchL = false, touchR = false, tiltX = 0, tiltY = 0;
 let baseGX = 0, baseGY = 0, totalError = 0, startTime = 0, samplingTimer = 0;
 let frameCount = 0;
 
-// Movement State
 let phaseDriftX = 0, phaseDriftY = 0;
 let ship = { x: 0, y: 0, vx: 0, vy: 0, angle: -Math.PI/2, vAngle: 0, w: 80 };
 let leadPoint = { x: 0, y: 0 };
@@ -79,14 +93,19 @@ window.addEventListener("touchend", () => { touchL = false; touchR = false; });
 window.addEventListener("devicemotion", (e) => {
     if (!gameRunning) return;
     const acc = e.accelerationIncludingGravity;
-    if (acc) { tiltX = (acc.y || 0) - baseGY; tiltY = (acc.x || 0) - (baseGX || 6); }
+    if (acc) { tiltX = (acc.y || 0) - (baseGY || 0); tiltY = (acc.x || 0) - (baseGX || 6); }
 });
 
+// Concentrated star spawning from the current Target position
 function spawnStar(zOverride) {
     stars.push({
-        originX: leadPoint.x, originY: leadPoint.y,
-        xOff: (Math.random() - 0.5) * 600, yOff: (Math.random() - 0.5) * 600,
-        z: zOverride || 1.0, size: Math.random() * 2 + 0.5
+        originX: leadPoint.x, 
+        originY: leadPoint.y,
+        // Tightened spread to make the "tunnel" follow the target more closely
+        xOff: (Math.random() - 0.5) * 400, 
+        yOff: (Math.random() - 0.5) * 400,
+        z: zOverride || 1.0, 
+        size: Math.random() * 2 + 0.5
     });
 }
 
@@ -107,26 +126,17 @@ function update() {
     let sf = 1 + (currentLevel - 1) * 0.15;
     let t = frameCount * 0.015 * sf; 
 
-    // PHASE DRIFT LOGIC: Slow interference waves ensure path never repeats exactly
+    // Phase Drift
     phaseDriftX = Math.sin(frameCount * 0.002) * 2.5; 
     phaseDriftY = Math.cos(frameCount * 0.003) * 2.5;
 
-    // Desired Position (Ghost) with Phase Offsets
-    let desiredX = (canvas.width / 2) + (
-        Math.sin(t * 0.8 + phaseDriftX) * 0.4 + 
-        Math.sin(t * 0.3) * 0.1
-    ) * canvas.width;
+    let desiredX = (canvas.width / 2) + (Math.sin(t * 0.8 + phaseDriftX) * 0.4 + Math.sin(t * 0.3) * 0.1) * canvas.width;
+    let desiredY = (canvas.height / 2) + (Math.cos(t * 0.7 + phaseDriftY) * 0.3 + Math.cos(t * 0.4) * 0.15) * canvas.height;
 
-    let desiredY = (canvas.height / 2) + (
-        Math.cos(t * 0.7 + phaseDriftY) * 0.3 + 
-        Math.cos(t * 0.4) * 0.15
-    ) * canvas.height;
-
-    // Smooth Ease (Tether) toward Desired - 7% factor for "weight"
     leadPoint.x += (desiredX - leadPoint.x) * 0.07;
     leadPoint.y += (desiredY - leadPoint.y) * 0.07;
 
-    // Scoring Logic
+    // Scoring
     if (elapsed > CONFIG.gracePeriod && now - samplingTimer >= CONFIG.sampleRate) {
         let dist = Math.hypot(ship.x - leadPoint.x, ship.y - leadPoint.y);
         if (dist > CONFIG.perfectZone) totalError += (dist - CONFIG.perfectZone);
@@ -208,7 +218,7 @@ startBtn.addEventListener("click", async () => {
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         try { await DeviceMotionEvent.requestPermission(); } catch(e) {}
     }
-    startBtn.style.display = "none";
+    document.getElementById("overlay").style.display = "none";
     startLevel(1);
 });
 </script>
